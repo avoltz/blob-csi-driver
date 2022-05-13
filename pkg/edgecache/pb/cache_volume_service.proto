@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+option go_package = "sigs.k8s.io/blob-csi-driver/pkg/edgecache/cache_volume_service";
+package cache_volume_service;
+
+import "blob_cache_volume.proto";
+
+message CreateBlobRequest {
+    optional blob_cache_volume.BlobCacheVolume volume = 1;
+}
+
+message CreateBlobResponse  {
+}
+
+message DeleteBlobRequest {
+    optional blob_cache_volume.Name name = 1;
+    optional bool do_not_flush = 2;
+}
+
+message DeleteBlobResponse {
+}
+
+message GetBlobRequest {
+    repeated blob_cache_volume.Name names = 1; 
+}
+
+message GetBlobResponse {
+    repeated blob_cache_volume.BlobCacheVolume volumes = 1;
+}
+
+
+message ListBlobRequest {    
+}
+
+message ListBlobResponse {
+    repeated blob_cache_volume.BlobCacheVolume volumes = 1;
+}    
+
+service CacheVolume {
+    rpc CreateBlob (CreateBlobRequest) returns (CreateBlobResponse);
+    rpc DeleteBlob (DeleteBlobRequest) returns (DeleteBlobResponse);
+    rpc GetBlob (GetBlobRequest) returns (GetBlobResponse);
+    rpc ListBlob (ListBlobRequest) returns (ListBlobResponse);
+}

@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+import "default_attrs.proto";
+
+option go_package = "sigs.k8s.io/blob-csi-driver/pkg/edgecache/blob_cache_volume";
+package blob_cache_volume;
+
+message Authenticator {
+    oneof authenticator {
+        string account_key = 1;
+        string managed_system_identity = 2;
+    }
+}
+
+message Name {
+    optional string account = 1;
+    optional string container = 2;
+}
+
+message BlobCacheVolume {
+    optional Name name = 1;
+    optional Authenticator auth = 2;
+    optional default_attributes.DefaultAttributes  default_attributes = 3;
+}
+
