@@ -38,6 +38,10 @@ func init() {
 var (
 	endpoint                               = flag.String("endpoint", "unix://tmp/csi.sock", "CSI endpoint")
 	blobfuseProxyEndpoint                  = flag.String("blobfuse-proxy-endpoint", "unix://tmp/blobfuse-proxy.sock", "blobfuse-proxy endpoint")
+	edgeCacheConfigEndpoint                = flag.String("edge-cache-config-endpoint", "hydrad:8675", "edge cache config endpoint")
+	edgeCacheMountEndpoint                 = flag.String("edge-cache-mount-endpoint", "unix://tmp/csi-mounts.sock", "edge cache mount endpoint")
+	edgeCacheConnTimeout                   = flag.Int("edge-cache-connect-timeout", 5, "edge cache connection timeout(seconds)")
+	edgeCacheVolumesFile                   = flag.String("edge-cache-volumes-file", "/tmp/edgecachevolumes", "path to a file used to cache volumes managed by edge cache")
 	nodeID                                 = flag.String("nodeid", "", "node id")
 	version                                = flag.Bool("version", false, "Print the version and exit.")
 	metricsAddress                         = flag.String("metrics-address", "0.0.0.0:29634", "export the metrics")
@@ -81,6 +85,10 @@ func handle() {
 		CloudConfigSecretName:                  *cloudConfigSecretName,
 		CloudConfigSecretNamespace:             *cloudConfigSecretNamespace,
 		BlobfuseProxyEndpoint:                  *blobfuseProxyEndpoint,
+		EdgeCacheConfigEndpoint:                *edgeCacheConfigEndpoint,
+		EdgeCacheMountEndpoint:                 *edgeCacheMountEndpoint,
+		EdgeCacheConnTimeout:                   *edgeCacheConnTimeout,
+		EdgeCacheVolumesFile:                   *edgeCacheVolumesFile,
 		EnableBlobfuseProxy:                    *enableBlobfuseProxy,
 		BlobfuseProxyConnTimout:                *blobfuseProxyConnTimout,
 		EnableBlobMockMount:                    *enableBlobMockMount,

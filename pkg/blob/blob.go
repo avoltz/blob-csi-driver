@@ -38,6 +38,7 @@ import (
 	utilexec "k8s.io/utils/exec"
 
 	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
+	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/volumesfile"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
@@ -68,6 +69,7 @@ const (
 	containerNameField           = "containername"
 	containerNamePrefixField     = "containernameprefix"
 	storeAccountKeyField         = "storeaccountkey"
+	isCacheEnabledField          = "iscacheenabled"
 	isHnsEnabledField            = "ishnsenabled"
 	getAccountKeyFromSecretField = "getaccountkeyfromsecret"
 	keyVaultURLField             = "keyvaulturl"
@@ -128,8 +130,12 @@ type DriverOptions struct {
 	CustomUserAgent                        string
 	UserAgentSuffix                        string
 	BlobfuseProxyEndpoint                  string
+	EdgeCacheConfigEndpoint                string
+	EdgeCacheMountEndpoint                 string
+	EdgeCacheVolumesFile                   string
 	EnableBlobfuseProxy                    bool
 	BlobfuseProxyConnTimout                int
+	EdgeCacheConnTimeout                   int
 	EnableBlobMockMount                    bool
 	AllowEmptyCloudConfig                  bool
 	AllowInlineVolumeKeyAccessWithIdentity bool
@@ -148,6 +154,8 @@ type Driver struct {
 	customUserAgent            string
 	userAgentSuffix            string
 	blobfuseProxyEndpoint      string
+	edgeCacheConfigEndpoint    string
+	edgeCacheMountEndpoint     string
 	// enableBlobMockMount is only for testing, DO NOT set as true in non-testing scenario
 	enableBlobMockMount                    bool
 	enableBlobfuseProxy                    bool
@@ -156,6 +164,7 @@ type Driver struct {
 	allowInlineVolumeKeyAccessWithIdentity bool
 	appendTimeStampInCacheDir              bool
 	blobfuseProxyConnTimout                int
+	edgeCacheConnTimeout                   int
 	mountPermissions                       uint64
 	mounter                                *mount.SafeFormatAndMount
 	volLockMap                             *util.LockMap
@@ -168,6 +177,8 @@ type Driver struct {
 	volMap sync.Map
 	// a timed cache storing account search history (solve account list throttling issue)
 	accountSearchCache *azcache.TimedCache
+	// a map storing volumeids
+	edgeCacheVolumes *volumesfile.VolumesFile
 }
 
 // NewDriver Creates a NewCSIDriver object. Assumes vendor version is equal to driver version &
@@ -177,14 +188,18 @@ func NewDriver(options *DriverOptions) *Driver {
 		volLockMap:                             util.NewLockMap(),
 		subnetLockMap:                          util.NewLockMap(),
 		volumeLocks:                            newVolumeLocks(),
+		edgeCacheVolumes:                       volumesfile.NewVolumesFile(options.EdgeCacheVolumesFile),
 		cloudConfigSecretName:                  options.CloudConfigSecretName,
 		cloudConfigSecretNamespace:             options.CloudConfigSecretNamespace,
 		customUserAgent:                        options.CustomUserAgent,
 		userAgentSuffix:                        options.UserAgentSuffix,
 		blobfuseProxyEndpoint:                  options.BlobfuseProxyEndpoint,
+		edgeCacheConfigEndpoint:                options.EdgeCacheConfigEndpoint,
+		edgeCacheMountEndpoint:                 options.EdgeCacheMountEndpoint,
 		enableBlobfuseProxy:                    options.EnableBlobfuseProxy,
 		allowInlineVolumeKeyAccessWithIdentity: options.AllowInlineVolumeKeyAccessWithIdentity,
 		blobfuseProxyConnTimout:                options.BlobfuseProxyConnTimout,
+		edgeCacheConnTimeout:                   options.EdgeCacheConnTimeout,
 		enableBlobMockMount:                    options.EnableBlobMockMount,
 		allowEmptyCloudConfig:                  options.AllowEmptyCloudConfig,
 		enableGetVolumeStats:                   options.EnableGetVolumeStats,
@@ -197,6 +212,9 @@ func NewDriver(options *DriverOptions) *Driver {
 	var err error
 	getter := func(key string) (interface{}, error) { return nil, nil }
 	if d.accountSearchCache, err = azcache.NewTimedcache(time.Minute, getter); err != nil {
+		klog.Fatalf("%v", err)
+	}
+	if err = d.edgeCacheVolumes.Check(); err != nil {
 		klog.Fatalf("%v", err)
 	}
 	return &d

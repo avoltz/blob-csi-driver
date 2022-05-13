@@ -44,6 +44,9 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	mount_azure_blob "sigs.k8s.io/blob-csi-driver/pkg/blobfuse-proxy/pb"
+	blob_cache_volume "sigs.k8s.io/blob-csi-driver/pkg/edgecache/blob_cache_volume"
+	cache_volume_service "sigs.k8s.io/blob-csi-driver/pkg/edgecache/cache_volume_service"
+	csi_mounts "sigs.k8s.io/blob-csi-driver/pkg/edgecache/csi_mounts"
 )
 
 type MountClient struct {
@@ -140,6 +143,99 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
+func (d *Driver) createEdgeCacheVolume(account string, container string, key string) error {
+	connectionTimeout := time.Duration(d.edgeCacheConnTimeout) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
+	// send create volume request to config service
+	conn, err := grpc.DialContext(ctx, d.edgeCacheConfigEndpoint, grpc.WithInsecure(), grpc.WithBlock())
+	if err != nil {
+		return err
+	}
+	//// create grpc client to edge cache
+	ecClient := cache_volume_service.NewCacheVolumeClient(conn)
+	authenticator := blob_cache_volume.Authenticator{
+		Authenticator: &blob_cache_volume.Authenticator_AccountKey{AccountKey: key},
+	}
+
+	blobVolume := blob_cache_volume.BlobCacheVolume{
+		Name: &blob_cache_volume.Name{
+			Account:   &account,
+			Container: &container,
+		},
+		Auth: &authenticator,
+	}
+
+	addReq := cache_volume_service.CreateBlobRequest{
+		Volume: &blobVolume,
+	}
+
+	klog.V(2).Infof("calling edge cache CreateBlob")
+	_, err = ecClient.CreateBlob(context.TODO(), &addReq)
+	if err != nil {
+		klog.Error("GRPC call returned with an error:", err)
+		return err
+	}
+	return err
+}
+
+func (d *Driver) mountEdgeCacheVolume(account string, container string, target_path string) error {
+	connectionTimeout := time.Duration(d.edgeCacheConnTimeout) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
+	// send create volume request to config service
+	conn, err := grpc.DialContext(ctx, d.edgeCacheMountEndpoint, grpc.WithInsecure(), grpc.WithBlock())
+	if err != nil {
+		return err
+	}
+	//// create grpc client to edge cache
+	ecClient := csi_mounts.NewCSIMountsClient(conn)
+	blobVolume := blob_cache_volume.Name{
+		Account:   &account,
+		Container: &container,
+	}
+	addReq := csi_mounts.AddMountReq{
+		TargetPath: &target_path,
+		VolumeInfo: &csi_mounts.VolumeInfo{
+			VolumeInfo: &csi_mounts.VolumeInfo_BlobVolume{
+				BlobVolume: &blobVolume,
+			},
+		},
+	}
+
+	klog.V(2).Infof("calling edge cache AddMount %s", &addReq)
+	_, err = ecClient.AddMount(context.TODO(), &addReq)
+	if err != nil {
+		klog.Error("GRPC call returned with an error:", err)
+		return err
+	}
+	return err
+}
+
+func (d *Driver) unmountEdgeCacheVolume(target_path string) error {
+	connectionTimeout := time.Duration(d.edgeCacheConnTimeout) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
+	// send create volume request to config service
+	conn, err := grpc.DialContext(ctx, d.edgeCacheMountEndpoint, grpc.WithInsecure(), grpc.WithBlock())
+	if err != nil {
+		return err
+	}
+	//// create grpc client to edge cache
+	ecClient := csi_mounts.NewCSIMountsClient(conn)
+	rmReq := csi_mounts.RemoveMountReq{
+		TargetPath: &target_path,
+	}
+
+	klog.V(2).Infof("calling edge cache RemoveMount: %s", &rmReq)
+	_, err = ecClient.RemoveMount(context.TODO(), &rmReq)
+	if err != nil {
+		klog.Error("GRPC call returned with an error:", err)
+		return err
+	}
+	return err
+}
+
 func (d *Driver) mountBlobfuseWithProxy(args string, authEnv []string) (string, error) {
 	klog.V(2).Infof("mouting using blobfuse proxy")
 	var resp *mount_azure_blob.MountAzureBlobResponse
@@ -218,7 +314,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	secrets := req.GetSecrets()
 
 	var serverAddress, storageEndpointSuffix, protocol, ephemeralVolMountOptions string
-	var ephemeralVol, isHnsEnabled bool
+	var ephemeralVol, isCacheEnabled, isHnsEnabled bool
 	mountPermissions := d.mountPermissions
 	performChmodOp := (mountPermissions > 0)
 	for k, v := range attrib {
@@ -233,6 +329,8 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			ephemeralVol = strings.EqualFold(v, trueValue)
 		case mountOptionsField:
 			ephemeralVolMountOptions = v
+		case isCacheEnabledField:
+			isCacheEnabled = strings.EqualFold(v, trueValue)
 		case isHnsEnabledField:
 			isHnsEnabled = strings.EqualFold(v, trueValue)
 		case mountPermissionsField:
@@ -260,7 +358,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	_, accountName, _, containerName, authEnv, err := d.GetAuthEnv(ctx, volumeID, protocol, attrib, secrets)
+	_, accountName, accountKey, containerName, authEnv, err := d.GetAuthEnv(ctx, volumeID, protocol, attrib, secrets)
 	if err != nil {
 		return nil, err
 	}
@@ -276,6 +374,21 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	if strings.TrimSpace(serverAddress) == "" {
 		// server address is "accountname.blob.core.windows.net" by default
 		serverAddress = fmt.Sprintf("%s.blob.%s", accountName, storageEndpointSuffix)
+	}
+
+	if isCacheEnabled {
+		klog.V(2).Infof("cache enabled, edge cache will be used")
+		if err = d.createEdgeCacheVolume(accountName, containerName, accountKey); err != nil {
+			return nil, err
+		}
+		if err = d.mountEdgeCacheVolume(accountName, containerName, targetPath); err != nil {
+			return nil, err
+		}
+		d.edgeCacheVolumes.Add(volumeID)
+		if err = d.edgeCacheVolumes.Save(); err != nil {
+			return nil, err
+		}
+		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
 	if protocol == nfs {
@@ -390,8 +503,19 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolu
 	}
 	defer d.volumeLocks.Release(volumeID)
 
+	var err error
+
 	klog.V(2).Infof("NodeUnstageVolume: volume %s unmounting on %s", volumeID, stagingTargetPath)
-	err := mount.CleanupMountPoint(stagingTargetPath, d.mounter, true /*extensiveMountPointCheck*/)
+	if isEdgeCacheVolume := d.edgeCacheVolumes.Remove(volumeID); isEdgeCacheVolume {
+		if err = d.unmountEdgeCacheVolume(stagingTargetPath); err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to unmount edge cache %q: %v", stagingTargetPath, err)
+		}
+		if err = d.edgeCacheVolumes.Save(); err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to update edge cache volumes file: %v", err)
+		}
+	}
+
+	err = mount.CleanupMountPoint(stagingTargetPath, d.mounter, true /*extensiveMountPointCheck*/)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to unmount staging target %q: %v", stagingTargetPath, err)
 	}
