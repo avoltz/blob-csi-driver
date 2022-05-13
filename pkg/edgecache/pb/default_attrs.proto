@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+option go_package = "sigs.k8s.io/blob-csi-driver/pkg/edgecache/default_attrs";
+package default_attributes;
+
+/* Example json config that nfsd can read:
+{
+ "version":1,
+ "mode":420,
+ "uid":"EFFECTIVE_ID",
+ "gid":"EFFECTIVE_ID",
+ "atime":{"seconds":123456, "nseconds": 22222222},
+ "mtime":{"seconds":123456, "nseconds": 22222222},
+ "ctime":{"seconds":123456, "nseconds": 22222222},
+}
+*/
+
+message vfstime {
+    uint32 seconds = 1;
+    uint32 nseconds = 2;
+}
+
+message DefaultAttributes {
+    enum DefaultIdTo {
+        ROOT = 0;
+        EFFECTIVE_ID = 1;
+    }
+    uint32 version = 1;
+    uint32 mode = 2;
+    DefaultIdTo uid = 3;
+    DefaultIdTo gid = 4;
+    vfstime atime = 5;
+    vfstime mtime = 6;
+    vfstime ctime = 7;
+}
