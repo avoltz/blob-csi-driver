@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
 	volumehelper "sigs.k8s.io/blob-csi-driver/pkg/util"
 
 	"github.com/Azure/azure-sdk-for-go/storage"
@@ -103,6 +104,23 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	source := req.GetStagingTargetPath()
 	if len(source) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Staging target not provided")
+	}
+
+	// check if the source is a mount point, if so we are not edge cache
+	sourceNotMounted, err := d.mounter.IsLikelyNotMountPoint(source)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "Error checking staging target mount")
+	}
+	if sourceNotMounted {
+		// check for edge cache
+		edgeCacheStagingMount := edgecache.GetStagingPath(source)
+		dirInfo, err := os.Stat(edgeCacheStagingMount)
+		if err == nil && dirInfo != nil && dirInfo.IsDir() {
+			edgeCacheNotMounted, err := d.mounter.IsLikelyNotMountPoint(edgeCacheStagingMount)
+			if err == nil && !edgeCacheNotMounted {
+				source = edgeCacheStagingMount
+			}
+		}
 	}
 
 	mountOptions := []string{"bind"}
@@ -218,7 +236,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	secrets := req.GetSecrets()
 
 	var serverAddress, storageEndpointSuffix, protocol, ephemeralVolMountOptions string
-	var ephemeralVol, isHnsEnabled bool
+	var ephemeralVol, isCacheEnabled, isHnsEnabled bool
 	mountPermissions := d.mountPermissions
 	performChmodOp := (mountPermissions > 0)
 	for k, v := range attrib {
@@ -233,6 +251,8 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			ephemeralVol = strings.EqualFold(v, trueValue)
 		case mountOptionsField:
 			ephemeralVolMountOptions = v
+		case isCacheEnabledField:
+			isCacheEnabled = strings.EqualFold(v, trueValue)
 		case isHnsEnabledField:
 			isHnsEnabled = strings.EqualFold(v, trueValue)
 		case mountPermissionsField:
@@ -251,6 +271,11 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		}
 	}
 
+	if isCacheEnabled {
+		targetPath = edgecache.GetStagingPath(targetPath)
+		klog.V(2).Infof("NodeStageVolume: cache enabled for volume, will mount to: %q", targetPath)
+	}
+
 	mnt, err := d.ensureMountPoint(targetPath, fs.FileMode(mountPermissions))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Could not mount target %q: %v", targetPath, err)
@@ -260,7 +285,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	_, accountName, _, containerName, authEnv, err := d.GetAuthEnv(ctx, volumeID, protocol, attrib, secrets)
+	_, accountName, accountKey, containerName, authEnv, err := d.GetAuthEnv(ctx, volumeID, protocol, attrib, secrets)
 	if err != nil {
 		return nil, err
 	}
@@ -276,6 +301,17 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	if strings.TrimSpace(serverAddress) == "" {
 		// server address is "accountname.blob.core.windows.net" by default
 		serverAddress = fmt.Sprintf("%s.blob.%s", accountName, storageEndpointSuffix)
+	}
+
+	if isCacheEnabled {
+		klog.V(2).Infof("cache enabled, edge cache will be used")
+		if err := d.edgeCacheManager.EnsureVolume(accountName, accountKey, containerName, targetPath); err != nil {
+			return nil, err
+		}
+		if err := d.edgeCacheManager.MountVolume(accountName, containerName, targetPath); err != nil {
+			return nil, err
+		}
+		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
 	if protocol == nfs {
@@ -391,7 +427,26 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolu
 	defer d.volumeLocks.Release(volumeID)
 
 	klog.V(2).Infof("NodeUnstageVolume: volume %s unmounting on %s", volumeID, stagingTargetPath)
-	err := mount.CleanupMountPoint(stagingTargetPath, d.mounter, true /*extensiveMountPointCheck*/)
+
+	// Check if there is a mount at the edgecache suffix
+	edgeCacheTargetPath := edgecache.GetStagingPath(stagingTargetPath)
+	klog.Errorf("NodeUnstageVolume: checking %s for edge cache %s", volumeID, edgeCacheTargetPath)
+	isNotEdgeCacheVolume, err := d.mounter.IsLikelyNotMountPoint(edgeCacheTargetPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, status.Errorf(codes.Internal, "unexpected error checking staging path %q: %v", stagingTargetPath, err)
+	}
+	if !isNotEdgeCacheVolume {
+		// This is an edge cache mount path so unmount it and clean it up
+		if err := d.edgeCacheManager.UnmountVolume(volumeID, edgeCacheTargetPath); err != nil {
+			return nil, err
+		}
+		if err = mount.CleanupMountPoint(edgeCacheTargetPath, d.mounter, true); err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to cleanup edgecache target %q: %v", edgeCacheTargetPath, err)
+		}
+	}
+
+	// cleanup the default mount point
+	err = mount.CleanupMountPoint(stagingTargetPath, d.mounter, true /*extensiveMountPointCheck*/)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to unmount staging target %q: %v", stagingTargetPath, err)
 	}

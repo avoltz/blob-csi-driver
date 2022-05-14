@@ -38,6 +38,7 @@ import (
 	utilexec "k8s.io/utils/exec"
 
 	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
+	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
@@ -68,6 +69,7 @@ const (
 	containerNameField           = "containername"
 	containerNamePrefixField     = "containernameprefix"
 	storeAccountKeyField         = "storeaccountkey"
+	isCacheEnabledField          = "iscacheenabled"
 	isHnsEnabledField            = "ishnsenabled"
 	getAccountKeyFromSecretField = "getaccountkeyfromsecret"
 	keyVaultURLField             = "keyvaulturl"
@@ -128,8 +130,11 @@ type DriverOptions struct {
 	CustomUserAgent                        string
 	UserAgentSuffix                        string
 	BlobfuseProxyEndpoint                  string
+	EdgeCacheConfigEndpoint                string
+	EdgeCacheMountEndpoint                 string
 	EnableBlobfuseProxy                    bool
 	BlobfuseProxyConnTimout                int
+	EdgeCacheConnTimeout                   int
 	EnableBlobMockMount                    bool
 	AllowEmptyCloudConfig                  bool
 	AllowInlineVolumeKeyAccessWithIdentity bool
@@ -157,6 +162,7 @@ type Driver struct {
 	appendTimeStampInCacheDir              bool
 	blobfuseProxyConnTimout                int
 	mountPermissions                       uint64
+	edgeCacheManager                       *edgecache.Manager
 	mounter                                *mount.SafeFormatAndMount
 	volLockMap                             *util.LockMap
 	// A map storing all volumes with ongoing operations so that additional operations
@@ -182,6 +188,7 @@ func NewDriver(options *DriverOptions) *Driver {
 		customUserAgent:                        options.CustomUserAgent,
 		userAgentSuffix:                        options.UserAgentSuffix,
 		blobfuseProxyEndpoint:                  options.BlobfuseProxyEndpoint,
+		edgeCacheManager:                       edgecache.NewManager(options.EdgeCacheConnTimeout, options.EdgeCacheConfigEndpoint, options.EdgeCacheMountEndpoint),
 		enableBlobfuseProxy:                    options.EnableBlobfuseProxy,
 		allowInlineVolumeKeyAccessWithIdentity: options.AllowInlineVolumeKeyAccessWithIdentity,
 		blobfuseProxyConnTimout:                options.BlobfuseProxyConnTimout,

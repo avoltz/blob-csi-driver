@@ -520,6 +520,12 @@ func TestNodeUnstageVolume(t *testing.T) {
 					StagingTargetPath: "./unit-test",
 				}
 				d := NewFakeDriver()
+				fakeMounter := &fakeMounter{}
+				fakeExec := &testingexec.FakeExec{ExactOrder: true}
+				d.mounter = &mount.SafeFormatAndMount{
+					Interface: fakeMounter,
+					Exec:      fakeExec,
+				}
 				_, err := d.NodeUnstageVolume(context.TODO(), req)
 				expectedErr := error(nil)
 				if !reflect.DeepEqual(err, expectedErr) {
