@@ -2,11 +2,8 @@
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: blob-nfs
+  name: blob-edgecache
 provisioner: blob.csi.azure.com
 parameters:
-  protocol: nfs
+  iscacheenabled: "true"
 volumeBindingMode: Immediate
-allowVolumeExpansion: true
-mountOptions:
-  - nconnect=8  # only supported on linux kernel version >= 5.3
