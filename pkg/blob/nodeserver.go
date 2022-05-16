@@ -143,18 +143,7 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
-func (d *Driver) checkEdgeCacheVolumeExists(account string, container string) (error, bool) {
-	connectionTimeout := time.Duration(d.edgeCacheConnTimeout) * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-	// send create volume request to config service
-	conn, err := grpc.DialContext(ctx, d.edgeCacheConfigEndpoint, grpc.WithInsecure(), grpc.WithBlock())
-	if err != nil {
-		return err, false
-	}
-	//// create grpc client to edge cache
-	ecClient := cache_volume_service.NewCacheVolumeClient(conn)
-
+func (d *Driver) checkEdgeCacheVolumeExists(client cache_volume_service.CacheVolumeClient, account string, container string) (error, bool) {
 	blobVolumeName := blob_cache_volume.Name{
 		Account:   &account,
 		Container: &container,
@@ -165,26 +154,17 @@ func (d *Driver) checkEdgeCacheVolumeExists(account string, container string) (e
 	}
 
 	klog.V(2).Infof("calling edge cache GetBlob")
-	getRsp, err := ecClient.GetBlob(context.TODO(), &getReq)
+	getRsp, err := client.GetBlob(context.TODO(), &getReq)
 	if err != nil {
-		klog.Error("GRPC call returned with an error:", err)
+		klog.Errorf("GRPC call returned with an error: %v", err)
 		return err, false
 	}
+	klog.V(2).Infof("GetBlob found %d volumes", len(getRsp.Volumes))
 	found := len(getRsp.Volumes) > 0
 	return err, found
 }
 
-func (d *Driver) createEdgeCacheVolume(account string, container string, key string) error {
-	connectionTimeout := time.Duration(d.edgeCacheConnTimeout) * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-	// send create volume request to config service
-	conn, err := grpc.DialContext(ctx, d.edgeCacheConfigEndpoint, grpc.WithInsecure(), grpc.WithBlock())
-	if err != nil {
-		return err
-	}
-	//// create grpc client to edge cache
-	ecClient := cache_volume_service.NewCacheVolumeClient(conn)
+func (d *Driver) createEdgeCacheVolume(client cache_volume_service.CacheVolumeClient, account string, container string, key string) error {
 	authenticator := blob_cache_volume.Authenticator{
 		Authenticator: &blob_cache_volume.Authenticator_AccountKey{AccountKey: key},
 	}
@@ -202,12 +182,13 @@ func (d *Driver) createEdgeCacheVolume(account string, container string, key str
 	}
 
 	klog.V(2).Infof("calling edge cache CreateBlob")
-	_, err = ecClient.CreateBlob(context.TODO(), &addReq)
+	_, err := client.CreateBlob(context.TODO(), &addReq)
 	if err != nil {
-		klog.Error("GRPC call returned with an error:", err)
+		klog.Errorf("GRPC call returned with an error: %v", err)
 		return err
 	}
-	return err
+	klog.V(2).Infof("createEdgeCacheVolume succeeded")
+	return nil
 }
 
 func (d *Driver) mountEdgeCacheVolume(account string, container string, target_path string) error {
@@ -219,6 +200,7 @@ func (d *Driver) mountEdgeCacheVolume(account string, container string, target_p
 	if err != nil {
 		return err
 	}
+	defer conn.Close()
 	//// create grpc client to edge cache
 	ecClient := csi_mounts.NewCSIMountsClient(conn)
 	blobVolume := blob_cache_volume.Name{
@@ -237,7 +219,7 @@ func (d *Driver) mountEdgeCacheVolume(account string, container string, target_p
 	klog.V(2).Infof("calling edge cache AddMount %s", &addReq)
 	_, err = ecClient.AddMount(context.TODO(), &addReq)
 	if err != nil {
-		klog.Error("GRPC call returned with an error:", err)
+		klog.Errorf("GRPC call returned with an error: %v", err)
 		return err
 	}
 	return err
@@ -261,7 +243,7 @@ func (d *Driver) unmountEdgeCacheVolume(target_path string) error {
 	klog.V(2).Infof("calling edge cache RemoveMount: %s", &rmReq)
 	_, err = ecClient.RemoveMount(context.TODO(), &rmReq)
 	if err != nil {
-		klog.Error("GRPC call returned with an error:", err)
+		klog.Errorf("GRPC call returned with an error: %v", err)
 		return err
 	}
 	return err
@@ -284,7 +266,7 @@ func (d *Driver) mountBlobfuseWithProxy(args string, authEnv []string) (string, 
 		klog.V(2).Infof("calling BlobfuseProxy: MountAzureBlob function")
 		resp, err = mountClient.service.MountAzureBlob(context.TODO(), &mountreq)
 		if err != nil {
-			klog.Error("GRPC call returned with an error:", err)
+			klog.Errorf("GRPC call returned with an error: %v", err)
 		}
 		output = resp.GetOutput()
 	}
@@ -409,18 +391,31 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 
 	if isCacheEnabled {
 		klog.V(2).Infof("cache enabled, edge cache will be used")
-		err, found := d.checkEdgeCacheVolumeExists(accountName, containerName)
+		/* Interact with the edge cache config service to create a volume if necessary */
+		// First create a client
+		connectionTimeout := time.Duration(d.edgeCacheConnTimeout) * time.Second
+		ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+		defer cancel()
+		conn, err := grpc.DialContext(ctx, d.edgeCacheConfigEndpoint, grpc.WithInsecure(), grpc.WithBlock())
+		if err != nil {
+			return nil, err
+		}
+		ecClient := cache_volume_service.NewCacheVolumeClient(conn)
+
+		err, found := d.checkEdgeCacheVolumeExists(ecClient, accountName, containerName)
 		if err != nil {
 			return nil, err
 		}
 		if !found {
 			klog.V(2).Infof("edge cache volume does not exist, creating...")
-			if err = d.createEdgeCacheVolume(accountName, containerName, accountKey); err != nil {
+			if err = d.createEdgeCacheVolume(ecClient, accountName, containerName, accountKey); err != nil {
 				return nil, err
 			}
 		} else {
 			klog.V(2).Infof("edge cache volume found, existing volume will be mounted")
 		}
+		conn.Close()
+
 		if err = d.mountEdgeCacheVolume(accountName, containerName, targetPath); err != nil {
 			return nil, err
 		}
