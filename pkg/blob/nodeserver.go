@@ -143,6 +143,37 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
+func (d *Driver) checkEdgeCacheVolumeExists(account string, container string) (error, bool) {
+	connectionTimeout := time.Duration(d.edgeCacheConnTimeout) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
+	// send create volume request to config service
+	conn, err := grpc.DialContext(ctx, d.edgeCacheConfigEndpoint, grpc.WithInsecure(), grpc.WithBlock())
+	if err != nil {
+		return err, false
+	}
+	//// create grpc client to edge cache
+	ecClient := cache_volume_service.NewCacheVolumeClient(conn)
+
+	blobVolumeName := blob_cache_volume.Name{
+		Account:   &account,
+		Container: &container,
+	}
+
+	getReq := cache_volume_service.GetBlobRequest{
+		Names: []*blob_cache_volume.Name{&blobVolumeName},
+	}
+
+	klog.V(2).Infof("calling edge cache GetBlob")
+	getRsp, err := ecClient.GetBlob(context.TODO(), &getReq)
+	if err != nil {
+		klog.Error("GRPC call returned with an error:", err)
+		return err, false
+	}
+	found := len(getRsp.Volumes) > 0
+	return err, found
+}
+
 func (d *Driver) createEdgeCacheVolume(account string, container string, key string) error {
 	connectionTimeout := time.Duration(d.edgeCacheConnTimeout) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
@@ -378,8 +409,17 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 
 	if isCacheEnabled {
 		klog.V(2).Infof("cache enabled, edge cache will be used")
-		if err = d.createEdgeCacheVolume(accountName, containerName, accountKey); err != nil {
+		err, found := d.checkEdgeCacheVolumeExists(accountName, containerName)
+		if err != nil {
 			return nil, err
+		}
+		if !found {
+			klog.V(2).Infof("edge cache volume does not exist, creating...")
+			if err = d.createEdgeCacheVolume(accountName, containerName, accountKey); err != nil {
+				return nil, err
+			}
+		} else {
+			klog.V(2).Infof("edge cache volume found, existing volume will be mounted")
 		}
 		if err = d.mountEdgeCacheVolume(accountName, containerName, targetPath); err != nil {
 			return nil, err
