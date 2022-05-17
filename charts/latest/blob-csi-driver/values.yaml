@@ -160,6 +160,9 @@ driver:
   userAgentSuffix: "OSS-helm"
   azureGoSDKLogLevel: "" # available values: ""(no logs), DEBUG, INFO, WARNING, ERROR
 
+edgecache:
+  configEndpoint: "hydrad-config:8675"
+
 linux:
   kubelet: /var/lib/kubelet
   distro: debian
