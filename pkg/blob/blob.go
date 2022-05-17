@@ -38,7 +38,6 @@ import (
 	utilexec "k8s.io/utils/exec"
 
 	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
-	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/volumesfile"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
@@ -132,7 +131,6 @@ type DriverOptions struct {
 	BlobfuseProxyEndpoint                  string
 	EdgeCacheConfigEndpoint                string
 	EdgeCacheMountEndpoint                 string
-	EdgeCacheVolumesFile                   string
 	EnableBlobfuseProxy                    bool
 	BlobfuseProxyConnTimout                int
 	EdgeCacheConnTimeout                   int
@@ -177,8 +175,6 @@ type Driver struct {
 	volMap sync.Map
 	// a timed cache storing account search history (solve account list throttling issue)
 	accountSearchCache *azcache.TimedCache
-	// a map storing volumeids
-	edgeCacheVolumes *volumesfile.VolumesFile
 }
 
 // NewDriver Creates a NewCSIDriver object. Assumes vendor version is equal to driver version &
@@ -188,7 +184,6 @@ func NewDriver(options *DriverOptions) *Driver {
 		volLockMap:                             util.NewLockMap(),
 		subnetLockMap:                          util.NewLockMap(),
 		volumeLocks:                            newVolumeLocks(),
-		edgeCacheVolumes:                       volumesfile.NewVolumesFile(options.EdgeCacheVolumesFile),
 		cloudConfigSecretName:                  options.CloudConfigSecretName,
 		cloudConfigSecretNamespace:             options.CloudConfigSecretNamespace,
 		customUserAgent:                        options.CustomUserAgent,
@@ -212,9 +207,6 @@ func NewDriver(options *DriverOptions) *Driver {
 	var err error
 	getter := func(key string) (interface{}, error) { return nil, nil }
 	if d.accountSearchCache, err = azcache.NewTimedcache(time.Minute, getter); err != nil {
-		klog.Fatalf("%v", err)
-	}
-	if err = d.edgeCacheVolumes.Check(); err != nil {
 		klog.Fatalf("%v", err)
 	}
 	return &d

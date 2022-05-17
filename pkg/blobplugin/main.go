@@ -88,7 +88,6 @@ func handle() {
 		EdgeCacheConfigEndpoint:                *edgeCacheConfigEndpoint,
 		EdgeCacheMountEndpoint:                 *edgeCacheMountEndpoint,
 		EdgeCacheConnTimeout:                   *edgeCacheConnTimeout,
-		EdgeCacheVolumesFile:                   *edgeCacheVolumesFile,
 		EnableBlobfuseProxy:                    *enableBlobfuseProxy,
 		BlobfuseProxyConnTimout:                *blobfuseProxyConnTimout,
 		EnableBlobMockMount:                    *enableBlobMockMount,

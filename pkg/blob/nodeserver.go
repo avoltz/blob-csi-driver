@@ -108,6 +108,23 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		return nil, status.Error(codes.InvalidArgument, "Staging target not provided")
 	}
 
+	// check if the source is a mount point, if so we are not edge cache
+	sourceNotMounted, err := d.mounter.IsLikelyNotMountPoint(source)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "Error checking staging target mount")
+	}
+	if sourceNotMounted {
+		// check for edge cache
+		edgeCacheStagingMount := source + "/edgecache"
+		dirInfo, err := os.Stat(edgeCacheStagingMount)
+		if err == nil && dirInfo != nil && dirInfo.IsDir() {
+			edgeCacheNotMounted, err := d.mounter.IsLikelyNotMountPoint(edgeCacheStagingMount)
+			if err == nil && !edgeCacheNotMounted {
+				source = edgeCacheStagingMount
+			}
+		}
+	}
+
 	mountOptions := []string{"bind"}
 	if req.GetReadonly() {
 		mountOptions = append(mountOptions, "ro")
@@ -222,7 +239,8 @@ func (d *Driver) mountEdgeCacheVolume(account string, container string, target_p
 		klog.Errorf("GRPC call returned with an error: %v", err)
 		return err
 	}
-	return err
+	klog.V(2).Infof("edge cache AddMount success")
+	return nil
 }
 
 func (d *Driver) unmountEdgeCacheVolume(target_path string) error {
@@ -362,6 +380,11 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		}
 	}
 
+	if isCacheEnabled {
+		targetPath += "/edgecache"
+		klog.V(2).Infof("NodeStageVolume: cache enabled for volume, will mount to: %q", targetPath)
+	}
+
 	mnt, err := d.ensureMountPoint(targetPath, fs.FileMode(mountPermissions))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Could not mount target %q: %v", targetPath, err)
@@ -417,10 +440,6 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		conn.Close()
 
 		if err = d.mountEdgeCacheVolume(accountName, containerName, targetPath); err != nil {
-			return nil, err
-		}
-		d.edgeCacheVolumes.Add(volumeID)
-		if err = d.edgeCacheVolumes.Save(); err != nil {
 			return nil, err
 		}
 		return &csi.NodeStageVolumeResponse{}, nil
@@ -540,13 +559,18 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolu
 
 	var err error
 
+	edgeCacheTargetPath := stagingTargetPath + "/edgecache"
 	klog.V(2).Infof("NodeUnstageVolume: volume %s unmounting on %s", volumeID, stagingTargetPath)
-	if isEdgeCacheVolume := d.edgeCacheVolumes.Remove(volumeID); isEdgeCacheVolume {
-		if err = d.unmountEdgeCacheVolume(stagingTargetPath); err != nil {
+	// Check if there is a mount at the edgecache suffix, treat this as an edge cache volume
+	isNotEdgeCacheVolume, err := d.mounter.IsLikelyNotMountPoint(edgeCacheTargetPath)
+	if !isNotEdgeCacheVolume {
+		klog.V(2).Infof("NodeUnstageVolume: volume %s is edge cache, unmounting %q", volumeID, edgeCacheTargetPath)
+		if err = d.unmountEdgeCacheVolume(edgeCacheTargetPath); err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to unmount edge cache %q: %v", stagingTargetPath, err)
 		}
-		if err = d.edgeCacheVolumes.Save(); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to update edge cache volumes file: %v", err)
+		err = mount.CleanupMountPoint(edgeCacheTargetPath, d.mounter, true)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to cleanup edgecache target %q: %v", edgeCacheTargetPath, err)
 		}
 	}
 
