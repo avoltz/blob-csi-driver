@@ -192,6 +192,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	}
 	if protocol == ecprotocol {
 		// TODO: call out to edge cache to validate sku
+		klog.V(2).Info("ecprotocol specified, validating storage SKU")
 	}
 
 	enableHTTPSTrafficOnly := true

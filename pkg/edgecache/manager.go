@@ -36,6 +36,13 @@ type Manager struct {
 	mountEndpoint  string
 }
 
+type ManagerInterface interface {
+	EnsureVolume(accountName string, accountKey string, containerName string, targetPath string) error
+	DeleteVolume(accountName string, containerName string) error
+	MountVolume(account string, container string, targetPath string) error
+	UnmountVolume(volumeID string, targetPath string) error
+}
+
 func NewManager(connectTimeout int, configEndpoint string, mountEndpoint string) *Manager {
 	return &Manager{
 		connectTimeout: connectTimeout,
@@ -99,13 +106,62 @@ func sendCreateVolume(client cache_volume_service.CacheVolumeClient, account str
 		Volume: &blobVolume,
 	}
 
-	klog.V(2).Infof("calling edge cache CreateBlob")
+	klog.V(2).Infof("calling edge cache CreateBlob %s %s %d", account, container, len(key))
 	_, err := client.CreateBlob(context.TODO(), &addReq)
 	if err != nil {
 		klog.Errorf("GRPC call returned with an error: %v", err)
 		return err
 	}
 	klog.V(2).Infof("CreateBlob succeeded")
+	return nil
+}
+
+func sendDeleteVolume(client cache_volume_service.CacheVolumeClient, account string, container string, interval time.Duration, timeout time.Duration) error {
+	deleteReq := cache_volume_service.DeleteBlobRequest{
+		Name: &blob_cache_volume.Name{
+			Account:   &account,
+			Container: &container,
+		},
+	}
+
+	delctx, delcancel := context.WithCancel(context.Background())
+	defer delcancel()
+
+	result := make(chan bool)
+	go func() {
+		for {
+			klog.V(3).Info("Sending deleteblob")
+			_, err := client.DeleteBlob(context.TODO(), &deleteReq)
+			if err != nil {
+				klog.V(3).Info("deleteblob received error %s", err)
+				errStatus, ok := status.FromError(err)
+				if ok && errStatus.Code() == codes.NotFound {
+					// ignore NotFound status
+					err = nil
+				}
+				if !ok {
+					klog.V(3).Infof("invalid deleteblob error received %s", errStatus)
+				}
+			}
+			if err != nil {
+				klog.Warningf("DeleteBlob GRPC failed (will retry) returned with an error: %v", err)
+				time.Sleep(interval)
+			} else {
+				result <- true
+				return
+			}
+			if delctx.Err() != nil {
+				klog.Errorf("DeleteBlob cancelled %q", delctx.Err().Error())
+				return
+			}
+		}
+	}()
+	select {
+	case <-result:
+		klog.Info("DeleteBlob success")
+	case <-time.After(timeout):
+		return status.Error(codes.DeadlineExceeded, "Deadline exceeded for deleteblob")
+	}
 	return nil
 }
 
@@ -129,9 +185,9 @@ func sendMount(client csi_mounts.CSIMountsClient, account string, container stri
 	// There can be a delay between CreateBlob and the mount being available to the Mount Service
 	// Use a goroutine to try a few times
 	result := make(chan bool)
-	klog.V(2).Infof("Edgecache AddMount: %s", &addReq)
 	go func() {
 		for {
+			klog.Infof("Edgecache AddMount %s, %s, %s", account, container, targetPath)
 			_, err := client.AddMount(context.TODO(), &addReq)
 			if err != nil {
 				klog.Warningf("AddMount GRPC failed (will retry) returned with an error: %v", err)
@@ -178,44 +234,42 @@ func createVolume(client cache_volume_service.CacheVolumeClient, accountName str
 	return nil
 }
 
-func (m *Manager) EnsureVolume(accountName string, accountKey string, containerName string, targetPath string) error {
+type ConnectionUsingFunc func(conn grpc.ClientConnInterface) error
+
+func (m *Manager) callWithConnection(fun ConnectionUsingFunc, endpoint string) error {
 	connectionTimeout := time.Duration(m.connectTimeout) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
 	defer cancel()
-	conn, err := grpc.DialContext(ctx, m.configEndpoint, grpc.WithInsecure(), grpc.WithBlock())
+	// do not use blocking here so that we can unit test without a server / no bufconn required
+	opts := []grpc.DialOption{grpc.WithInsecure()}
+	conn, err := grpc.DialContext(ctx, endpoint, opts...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	return fun(conn)
+}
 
-	client := cache_volume_service.NewCacheVolumeClient(conn)
-	return createVolume(client, accountName, accountKey, containerName)
+func (m *Manager) EnsureVolume(accountName string, accountKey string, containerName string, targetPath string) error {
+	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
+		return createVolume(cache_volume_service.NewCacheVolumeClient(conn), accountName, accountKey, containerName)
+	}, m.configEndpoint)
+}
+
+func (m *Manager) DeleteVolume(accountName string, containerName string) error {
+	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
+		return sendDeleteVolume(cache_volume_service.NewCacheVolumeClient(conn), accountName, containerName, 1*time.Second, 30*time.Second)
+	}, m.configEndpoint)
 }
 
 func (m *Manager) MountVolume(account string, container string, targetPath string) error {
-	connectionTimeout := time.Duration(m.connectTimeout) * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-	conn, err := grpc.DialContext(ctx, m.mountEndpoint, grpc.WithInsecure(), grpc.WithBlock())
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	client := csi_mounts.NewCSIMountsClient(conn)
-	return sendMount(client, account, container, targetPath, 500*time.Millisecond, 5*time.Second)
+	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
+		return sendMount(csi_mounts.NewCSIMountsClient(conn), account, container, targetPath, 500*time.Millisecond, 5*time.Second)
+	}, m.mountEndpoint)
 }
 
 func (m *Manager) UnmountVolume(volumeID string, targetPath string) error {
-	connectionTimeout := time.Duration(m.connectTimeout) * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-	conn, err := grpc.DialContext(ctx, m.mountEndpoint, grpc.WithInsecure(), grpc.WithBlock())
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	client := csi_mounts.NewCSIMountsClient(conn)
-	return sendUnmount(client, targetPath)
+	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
+		return sendUnmount(csi_mounts.NewCSIMountsClient(conn), targetPath)
+	}, m.mountEndpoint)
 }

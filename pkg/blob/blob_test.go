@@ -48,12 +48,13 @@ const (
 
 func NewFakeDriver() *Driver {
 	driverOptions := DriverOptions{
-		NodeID:                  fakeNodeID,
-		DriverName:              DefaultDriverName,
-		BlobfuseProxyEndpoint:   "",
-		EnableBlobfuseProxy:     false,
-		BlobfuseProxyConnTimout: 5,
-		EnableBlobMockMount:     false,
+		NodeID:                   fakeNodeID,
+		DriverName:               DefaultDriverName,
+		BlobfuseProxyEndpoint:    "",
+		EnableBlobfuseProxy:      false,
+		EnableEdgeCacheFinalizer: false,
+		BlobfuseProxyConnTimout:  5,
+		EnableBlobMockMount:      false,
 	}
 	driver := NewDriver(&driverOptions)
 	driver.Name = fakeDriverName

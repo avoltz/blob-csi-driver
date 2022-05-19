@@ -90,6 +90,7 @@ func handle() {
 		EnableBlobfuseProxy:                    *enableBlobfuseProxy,
 		BlobfuseProxyConnTimout:                *blobfuseProxyConnTimout,
 		EnableBlobMockMount:                    *enableBlobMockMount,
+		EnableEdgeCacheFinalizer:               true,
 		CustomUserAgent:                        *customUserAgent,
 		UserAgentSuffix:                        *userAgentSuffix,
 		AllowEmptyCloudConfig:                  *allowEmptyCloudConfig,

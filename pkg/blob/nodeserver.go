@@ -28,11 +28,13 @@ import (
 	"time"
 
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
-	volumehelper "sigs.k8s.io/blob-csi-driver/pkg/util"
+	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/finalizer"
+	blobcsiutil "sigs.k8s.io/blob-csi-driver/pkg/util"
 
 	"github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/volume"
@@ -140,7 +142,7 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	klog.V(2).Infof("NodePublishVolume: volume %s mounting %s at %s with mountOptions: %v", volumeID, source, target, mountOptions)
 	if d.enableBlobMockMount {
 		klog.Warningf("NodePublishVolume: mock mount on volumeID(%s), this is only for TESTING!!!", volumeID)
-		if err := volumehelper.MakeDir(target, os.FileMode(mountPermissions)); err != nil {
+		if err := blobcsiutil.MakeDir(target, os.FileMode(mountPermissions)); err != nil {
 			klog.Errorf("MakeDir failed on target: %s (%v)", target, err)
 			return nil, status.Errorf(codes.Internal, err.Error())
 		}
@@ -315,10 +317,25 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 
 	if protocol == ecprotocol {
 		klog.V(2).Infof("cache enabled, edge cache will be used")
-		if err := d.edgeCacheManager.EnsureVolume(accountName, accountKey, containerName, targetPath); err != nil {
+		klog.V(2).Infof("edgecache attrib %v", attrib)
+		pvName, exists := attrib[pvNameKey]
+		var pv *v1.PersistentVolume
+		if exists {
+			pv, err = finalizer.GetPVByName(d.cloud.KubeClient, pvName)
+		} else {
+			pv, err = finalizer.GetPVByVolumeID(d.cloud.KubeClient, volumeID)
+		}
+		if err != nil {
 			return nil, err
 		}
-		if err := d.edgeCacheManager.MountVolume(accountName, containerName, targetPath); err != nil {
+		err = finalizer.AddFinalizer(d.cloud.KubeClient, pv, accountName, containerName)
+		if err != nil {
+			return nil, err
+		}
+		if err = d.edgeCacheManager.EnsureVolume(accountName, accountKey, containerName, targetPath); err != nil {
+			return nil, err
+		}
+		if err = d.edgeCacheManager.MountVolume(accountName, containerName, targetPath); err != nil {
 			return nil, err
 		}
 		return &csi.NodeStageVolumeResponse{}, nil
@@ -373,7 +390,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	authEnv = append(authEnv, "AZURE_STORAGE_ACCOUNT="+accountName, "AZURE_STORAGE_BLOB_ENDPOINT="+serverAddress)
 	if d.enableBlobMockMount {
 		klog.Warningf("NodeStageVolume: mock mount on volumeID(%s), this is only for TESTING!!!", volumeID)
-		if err := volumehelper.MakeDir(targetPath, os.FileMode(mountPermissions)); err != nil {
+		if err := blobcsiutil.MakeDir(targetPath, os.FileMode(mountPermissions)); err != nil {
 			klog.Errorf("MakeDir failed on target: %s (%v)", targetPath, err)
 			return nil, status.Errorf(codes.Internal, err.Error())
 		}
@@ -597,7 +614,7 @@ func (d *Driver) ensureMountPoint(target string, perm os.FileMode) (bool, error)
 		notMnt = true
 		return !notMnt, err
 	}
-	if err := volumehelper.MakeDir(target, perm); err != nil {
+	if err := blobcsiutil.MakeDir(target, perm); err != nil {
 		klog.Errorf("MakeDir failed on target: %s (%v)", target, err)
 		return !notMnt, err
 	}
