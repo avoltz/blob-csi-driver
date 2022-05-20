@@ -29,6 +29,19 @@ func NewManager(connectTimeout int, configEndpoint string, mountEndpoint string)
 }
 
 func GetStagingPath(path string) string {
+	/*
+		Use a special suffix for staging mounts during NodeStageVolume/NodeUnstageVolume
+
+		During NodeUnstageVolume, typically umount is used to teardown the node mount.
+		Cache mounts require special mount/unmount GRPC calls via csi_mounts.
+
+		Cache volumes are indicated during staging by a property, but these properties are not
+		included in the NodeUnstageVolume request, so this suffix is used by cache volumes
+		during staging so that during unstaging we can check the same location and handle
+		unmount using GRPC instead of the default path.
+
+		If edge cache were a standalone CSI driver we could drop this suffix.
+	*/
 	return filepath.Join(path, "edgecache")
 }
 
