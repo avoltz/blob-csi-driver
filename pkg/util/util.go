@@ -21,6 +21,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -154,4 +158,22 @@ func ConvertTagsToMap(tags string) (map[string]string, error) {
 		m[key] = value
 	}
 	return m, nil
+}
+
+func GetKubeClient(kubeconfig string) (*kubernetes.Clientset, error) {
+	var (
+		config *rest.Config
+		err    error
+	)
+	if kubeconfig != "" {
+		if config, err = clientcmd.BuildConfigFromFlags("", kubeconfig); err != nil {
+			return nil, err
+		}
+	} else {
+		if config, err = rest.InClusterConfig(); err != nil {
+			return nil, err
+		}
+	}
+
+	return kubernetes.NewForConfig(config)
 }

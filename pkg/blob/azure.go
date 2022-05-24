@@ -30,11 +30,10 @@ import (
 
 	"github.com/Azure/go-autorest/autorest"
 
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
+	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	"sigs.k8s.io/cloud-provider-azure/pkg/auth"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
 )
@@ -61,7 +60,7 @@ func getCloudProvider(kubeconfig, nodeID, secretName, secretNamespace, userAgent
 	}
 	az.Environment.StorageEndpointSuffix = storage.DefaultBaseURL
 
-	kubeClient, err := getKubeClient(kubeconfig)
+	kubeClient, err := util.GetKubeClient(kubeconfig)
 	if err != nil {
 		klog.Warningf("get kubeconfig(%s) failed with error: %v", kubeconfig, err)
 		if !os.IsNotExist(err) && !errors.Is(err, rest.ErrNotInCluster) {
@@ -249,22 +248,4 @@ func (d *Driver) updateSubnetServiceEndpoints(ctx context.Context, vnetResourceG
 	}
 
 	return nil
-}
-
-func getKubeClient(kubeconfig string) (*kubernetes.Clientset, error) {
-	var (
-		config *rest.Config
-		err    error
-	)
-	if kubeconfig != "" {
-		if config, err = clientcmd.BuildConfigFromFlags("", kubeconfig); err != nil {
-			return nil, err
-		}
-	} else {
-		if config, err = rest.InClusterConfig(); err != nil {
-			return nil, err
-		}
-	}
-
-	return kubernetes.NewForConfig(config)
 }
