@@ -69,7 +69,6 @@ const (
 	containerNameField           = "containername"
 	containerNamePrefixField     = "containernameprefix"
 	storeAccountKeyField         = "storeaccountkey"
-	isCacheEnabledField          = "iscacheenabled"
 	isHnsEnabledField            = "ishnsenabled"
 	getAccountKeyFromSecretField = "getaccountkeyfromsecret"
 	keyVaultURLField             = "keyvaulturl"
@@ -84,6 +83,7 @@ const (
 	trueValue                    = "true"
 	defaultSecretAccountName     = "azurestorageaccountname"
 	defaultSecretAccountKey      = "azurestorageaccountkey"
+	ecprotocol                   = "edgecache"
 	fuse                         = "fuse"
 	nfs                          = "nfs"
 	vnetResourceGroupField       = "vnetresourcegroup"
@@ -117,7 +117,7 @@ const (
 )
 
 var (
-	supportedProtocolList = []string{fuse, nfs}
+	supportedProtocolList = []string{ecprotocol, fuse, nfs}
 	retriableErrors       = []string{accountNotProvisioned, tooManyRequests, statusCodeNotFound, containerBeingDeleted, clientThrottled}
 )
 

@@ -236,7 +236,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	secrets := req.GetSecrets()
 
 	var serverAddress, storageEndpointSuffix, protocol, ephemeralVolMountOptions string
-	var ephemeralVol, isCacheEnabled, isHnsEnabled bool
+	var ephemeralVol, isHnsEnabled bool
 	mountPermissions := d.mountPermissions
 	performChmodOp := (mountPermissions > 0)
 	for k, v := range attrib {
@@ -251,8 +251,6 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			ephemeralVol = strings.EqualFold(v, trueValue)
 		case mountOptionsField:
 			ephemeralVolMountOptions = v
-		case isCacheEnabledField:
-			isCacheEnabled = strings.EqualFold(v, trueValue)
 		case isHnsEnabledField:
 			isHnsEnabled = strings.EqualFold(v, trueValue)
 		case mountPermissionsField:
@@ -271,7 +269,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		}
 	}
 
-	if isCacheEnabled {
+	if protocol == ecprotocol {
 		targetPath = edgecache.GetStagingPath(targetPath)
 		klog.V(2).Infof("NodeStageVolume: cache enabled for volume, will mount to: %q", targetPath)
 	}
@@ -303,7 +301,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		serverAddress = fmt.Sprintf("%s.blob.%s", accountName, storageEndpointSuffix)
 	}
 
-	if isCacheEnabled {
+	if protocol == ecprotocol {
 		klog.V(2).Infof("cache enabled, edge cache will be used")
 		if err := d.edgeCacheManager.EnsureVolume(accountName, accountKey, containerName, targetPath); err != nil {
 			return nil, err

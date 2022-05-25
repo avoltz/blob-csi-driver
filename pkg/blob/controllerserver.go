@@ -68,7 +68,6 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		parameters = make(map[string]string)
 	}
 	var storageAccountType, subsID, resourceGroup, location, account, containerName, containerNamePrefix, protocol, customTags, secretName, secretNamespace, pvcNamespace string
-	var isCacheEnabled bool = false
 	var isHnsEnabled *bool
 	var vnetResourceGroup, vnetName, subnetName string
 	var matchTags bool
@@ -108,10 +107,6 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			secretName = v
 		case secretNamespaceField:
 			secretNamespace = v
-		case isCacheEnabledField:
-			if strings.EqualFold(v, trueValue) {
-				isCacheEnabled = true
-			}
 		case isHnsEnabledField:
 			if strings.EqualFold(v, trueValue) {
 				isHnsEnabled = to.BoolPtr(true)
@@ -190,8 +185,8 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	if !isSupportedContainerNamePrefix(containerNamePrefix) {
 		return nil, status.Errorf(codes.InvalidArgument, "containerNamePrefix(%s) can only contain lowercase letters, numbers, hyphens, and length should be less than 21", containerNamePrefix)
 	}
-	if isCacheEnabled {
-		// TODO: early failure here for dynamic provisioning, we should block any invalid account types
+	if protocol == ecprotocol {
+		// TODO: call out to edge cache to validate sku
 	}
 
 	enableHTTPSTrafficOnly := true
