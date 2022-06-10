@@ -25,7 +25,7 @@ import (
 	"golang.org/x/net/context"
 
 	kv "github.com/Azure/azure-sdk-for-go/services/keyvault/2016-10-01/keyvault"
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2021-02-01/network"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2021-08-01/network"
 	"github.com/Azure/azure-sdk-for-go/storage"
 
 	"github.com/Azure/go-autorest/autorest"
@@ -47,7 +47,7 @@ var (
 
 // IsAzureStackCloud decides whether the driver is running on Azure Stack Cloud.
 func IsAzureStackCloud(cloud *azure.Cloud) bool {
-	return strings.EqualFold(cloud.Config.Cloud, "AZURESTACKCLOUD")
+	return !cloud.Config.DisableAzureStackCloud && strings.EqualFold(cloud.Config.Cloud, "AZURESTACKCLOUD")
 }
 
 // getCloudProvider get Azure Cloud Provider
@@ -116,6 +116,7 @@ func getCloudProvider(kubeconfig, nodeID, secretName, secretNamespace, userAgent
 		}
 	} else {
 		config.UserAgent = userAgent
+		config.CloudProviderBackoff = true
 		if err = az.InitializeCloudFromConfig(config, fromSecret, false); err != nil {
 			klog.Warningf("InitializeCloudFromConfig failed with error: %v", err)
 		}
