@@ -950,3 +950,109 @@ func TestCreateStorageAccountSecret(t *testing.T) {
 		t.Errorf("Expected account name(%s), Actual account name(%s); Expected account key(%s), Actual account key(%s)", "TestAccountName", result[defaultSecretAccountName], "TestAccountKey", result[defaultSecretAccountKey])
 	}
 }
+
+func TestSetKeyValueInMap(t *testing.T) {
+	tests := []struct {
+		desc     string
+		m        map[string]string
+		key      string
+		value    string
+		expected map[string]string
+	}{
+		{
+			desc:  "nil map",
+			key:   "key",
+			value: "value",
+		},
+		{
+			desc:     "empty map",
+			m:        map[string]string{},
+			key:      "key",
+			value:    "value",
+			expected: map[string]string{"key": "value"},
+		},
+		{
+			desc:  "non-empty map",
+			m:     map[string]string{"k": "v"},
+			key:   "key",
+			value: "value",
+			expected: map[string]string{
+				"k":   "v",
+				"key": "value",
+			},
+		},
+		{
+			desc:     "same key already exists",
+			m:        map[string]string{"subDir": "value2"},
+			key:      "subDir",
+			value:    "value",
+			expected: map[string]string{"subDir": "value"},
+		},
+		{
+			desc:     "case insentive key already exists",
+			m:        map[string]string{"subDir": "value2"},
+			key:      "subdir",
+			value:    "value",
+			expected: map[string]string{"subDir": "value"},
+		},
+	}
+
+	for _, test := range tests {
+		setKeyValueInMap(test.m, test.key, test.value)
+		if !reflect.DeepEqual(test.m, test.expected) {
+			t.Errorf("test[%s]: unexpected output: %v, expected result: %v", test.desc, test.m, test.expected)
+		}
+	}
+}
+
+func TestReplaceWithMap(t *testing.T) {
+	tests := []struct {
+		desc     string
+		str      string
+		m        map[string]string
+		expected string
+	}{
+		{
+			desc:     "empty string",
+			str:      "",
+			expected: "",
+		},
+		{
+			desc:     "empty map",
+			str:      "",
+			m:        map[string]string{},
+			expected: "",
+		},
+		{
+			desc:     "empty key",
+			str:      "prefix-" + pvNameMetadata,
+			m:        map[string]string{"": "pv"},
+			expected: "prefix-" + pvNameMetadata,
+		},
+		{
+			desc:     "empty value",
+			str:      "prefix-" + pvNameMetadata,
+			m:        map[string]string{pvNameMetadata: ""},
+			expected: "prefix-",
+		},
+		{
+			desc:     "one replacement",
+			str:      "prefix-" + pvNameMetadata,
+			m:        map[string]string{pvNameMetadata: "pv"},
+			expected: "prefix-pv",
+		},
+		{
+			desc:     "multiple replacements",
+			str:      pvcNamespaceMetadata + pvcNameMetadata,
+			m:        map[string]string{pvcNamespaceMetadata: "namespace", pvcNameMetadata: "pvcname"},
+			expected: "namespacepvcname",
+		},
+	}
+
+	for _, test := range tests {
+		result := replaceWithMap(test.str, test.m)
+		if result != test.expected {
+			t.Errorf("test[%s]: unexpected output: %v, expected result: %v", test.desc, result, test.expected)
+		}
+	}
+}

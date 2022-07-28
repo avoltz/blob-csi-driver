@@ -77,11 +77,11 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	context := req.GetVolumeContext()
 	if context != nil {
 		if strings.EqualFold(context[ephemeralField], trueValue) {
-			context[secretNamespaceField] = context[podNamespaceField]
+			setKeyValueInMap(context, secretNamespaceField, context[podNamespaceField])
 			if !d.allowInlineVolumeKeyAccessWithIdentity {
 				// only get storage account from secret
-				context[getAccountKeyFromSecretField] = trueValue
-				context[storageAccountField] = ""
+				setKeyValueInMap(context, getAccountKeyFromSecretField, trueValue)
+				setKeyValueInMap(context, storageAccountField, "")
 			}
 			klog.V(2).Infof("NodePublishVolume: ephemeral volume(%s) mount on %s, VolumeContext: %v", volumeID, target, context)
 			_, err := d.NodeStageVolume(ctx, &csi.NodeStageVolumeRequest{
@@ -142,7 +142,7 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		klog.Warningf("NodePublishVolume: mock mount on volumeID(%s), this is only for TESTING!!!", volumeID)
 		if err := volumehelper.MakeDir(target, os.FileMode(mountPermissions)); err != nil {
 			klog.Errorf("MakeDir failed on target: %s (%v)", target, err)
-			return nil, err
+			return nil, status.Errorf(codes.Internal, err.Error())
 		}
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
@@ -237,6 +237,9 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 
 	var serverAddress, storageEndpointSuffix, protocol, ephemeralVolMountOptions string
 	var ephemeralVol, isHnsEnabled bool
+
+	containerNameReplaceMap := map[string]string{}
+
 	mountPermissions := d.mountPermissions
 	performChmodOp := (mountPermissions > 0)
 	for k, v := range attrib {
@@ -253,6 +256,12 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			ephemeralVolMountOptions = v
 		case isHnsEnabledField:
 			isHnsEnabled = strings.EqualFold(v, trueValue)
+		case pvcNamespaceKey:
+			containerNameReplaceMap[pvcNamespaceMetadata] = v
+		case pvcNameKey:
+			containerNameReplaceMap[pvcNameMetadata] = v
+		case pvNameKey:
+			containerNameReplaceMap[pvNameMetadata] = v
 		case mountPermissionsField:
 			if v != "" {
 				var err error
@@ -285,8 +294,11 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 
 	_, accountName, accountKey, containerName, authEnv, err := d.GetAuthEnv(ctx, volumeID, protocol, attrib, secrets)
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Internal, err.Error())
 	}
+
+	// replace pv/pvc name namespace metadata in subDir
+	containerName = replaceWithMap(containerName, containerNameReplaceMap)
 
 	if strings.TrimSpace(storageEndpointSuffix) == "" {
 		if d.cloud.Environment.StorageEndpointSuffix != "" {
@@ -363,7 +375,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		klog.Warningf("NodeStageVolume: mock mount on volumeID(%s), this is only for TESTING!!!", volumeID)
 		if err := volumehelper.MakeDir(targetPath, os.FileMode(mountPermissions)); err != nil {
 			klog.Errorf("MakeDir failed on target: %s (%v)", targetPath, err)
-			return nil, err
+			return nil, status.Errorf(codes.Internal, err.Error())
 		}
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
@@ -376,7 +388,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	}
 
 	if err != nil {
-		err = fmt.Errorf("Mount failed with error: %w, output: %v", err, output)
+		err = status.Errorf(codes.Internal, "Mount failed with error: %v, output: %v", err, output)
 		klog.Errorf("%v", err)
 		notMnt, mntErr := d.mounter.IsLikelyNotMountPoint(targetPath)
 		if mntErr != nil {

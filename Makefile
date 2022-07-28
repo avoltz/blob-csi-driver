@@ -17,7 +17,7 @@ GIT_COMMIT ?= $(shell git rev-parse HEAD)
 REGISTRY ?= andyzhangx
 REGISTRY_NAME ?= $(shell echo $(REGISTRY) | sed "s/.azurecr.io//g")
 IMAGE_NAME ?= blob-csi
-IMAGE_VERSION ?= v1.14.0
+IMAGE_VERSION ?= v1.16.0
 CLOUD ?= AzurePublicCloud
 # Use a custom version for E2E tests if we are in Prow
 ifdef CI
@@ -89,7 +89,6 @@ e2e-bootstrap: install-helm
 	docker pull $(IMAGE_TAG) || make blob-container push
 	helm install blob-csi-driver ./charts/latest/blob-csi-driver --namespace kube-system --wait --timeout=15m -v=5 --debug \
 		--set controller.replicas=1 \
-		--set controller.runOnMaster=true \
 		--set cloud=$(CLOUD) \
 		$(E2E_HELM_OPTIONS)
 
@@ -179,6 +178,4 @@ delete-metrics-svc:
 
 .PHONY: blobfuse-proxy
 blobfuse-proxy:
-	mkdir -p ./pkg/blobfuse-proxy/debpackage/usr/bin/ ./_output
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags="-s -w" -o ./pkg/blobfuse-proxy/debpackage/usr/bin/blobfuse-proxy ./pkg/blobfuse-proxy
-	$(DPKG_DEB) --build pkg/blobfuse-proxy/debpackage ./_output/blobfuse-proxy.deb
+	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags="-s -w" -o _output/${ARCH}/blobfuse-proxy ./pkg/blobfuse-proxy

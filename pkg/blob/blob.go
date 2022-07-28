@@ -112,9 +112,12 @@ const (
 
 	defaultNamespace = "default"
 
-	pvcNameKey      = "csi.storage.k8s.io/pvc/name"
-	pvcNamespaceKey = "csi.storage.k8s.io/pvc/namespace"
-	pvNameKey       = "csi.storage.k8s.io/pv/name"
+	pvcNameKey           = "csi.storage.k8s.io/pvc/name"
+	pvcNamespaceKey      = "csi.storage.k8s.io/pvc/namespace"
+	pvNameKey            = "csi.storage.k8s.io/pv/name"
+	pvcNameMetadata      = "${pvc.metadata.name}"
+	pvcNamespaceMetadata = "${pvc.metadata.namespace}"
+	pvNameMetadata       = "${pv.metadata.name}"
 
 	VolumeID = "volumeid"
 )
@@ -329,7 +332,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 	rgName, accountName, containerName, secretNamespace, err := GetContainerInfo(volumeID)
 	if err != nil {
 		// ignore volumeID parsing error
-		klog.V(2).Info("parsing volumeID(%s) return with error: %v", volumeID, err)
+		klog.V(2).Infof("parsing volumeID(%s) return with error: %v", volumeID, err)
 		err = nil
 	}
 
@@ -809,4 +812,29 @@ func createStorageAccountSecret(account, key string) map[string]string {
 	secret[defaultSecretAccountName] = account
 	secret[defaultSecretAccountKey] = key
 	return secret
+}
+
+// setKeyValueInMap set key/value pair in map
+// key in the map is case insensitive, if key already exists, overwrite existing value
+func setKeyValueInMap(m map[string]string, key, value string) {
+	if m == nil {
+		return
+	}
+	for k := range m {
+		if strings.EqualFold(k, key) {
+			m[k] = value
+			return
+		}
+	}
+	m[key] = value
+}
+
+// replaceWithMap replace key with value for str
+func replaceWithMap(str string, m map[string]string) string {
+	for k, v := range m {
+		if k != "" {
+			str = strings.ReplaceAll(str, k, v)
+		}
+	}
+	return str
 }
