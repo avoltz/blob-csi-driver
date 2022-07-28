@@ -1,0 +1,70 @@
+### REMOVE THIS BEFORE SENDING PR UPSTREAM!
+###
+
+name: Sync staging with upstream
+
+on:
+  workflow_dispatch:
+  #schedule:
+  #  - cron: '17 3 * * *'
+
+env:
+  UPSTREAM_REPO: https://github.com/kubernetes-sigs/blob-csi-driver
+  UPSTREAM_BRANCH: master
+  FORK_BRANCH: staging
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout our fork branch to check if merge is empty
+      - uses: actions/checkout@v3
+        with:
+          # include all history
+          fetch-depth: 0
+          ref: ${{ env.FORK_BRANCH }}
+
+      - name: Add upstream remote remote
+        run: |
+          # force github cli to use origin, not upstream
+          git config --local --add "remote.origin.gh-resolved" "base"
+
+          git remote add upstream "${{ env.UPSTREAM_REPO }}"
+          git fetch upstream
+
+      - name:
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -e
+          # check if a PR branch exists already
+          PR_BRANCH=$(gh pr list --label pullupstream --json 'headRefName' -q '.[-1] | .headRefName')
+          DEFAULT_PR_BRANCH=actions/pullupstream
+          if [ -n "${PR_BRANCH}" ]; then
+              # update the existing pr
+              git checkout -b "${PR_BRANCH}" "origin/${PR_BRANCH}"
+          else
+              # create a new branch for PR
+              git checkout -b "${DEFAULT_PR_BRANCH}" "origin/${{ env.FORK_BRANCH }}"
+          fi
+          # use the existing branch or a default named one
+          BRANCH=${PR_BRANCH:-${DEFAULT_PR_BRANCH}}
+
+          # git merge will commit, so configure this checkout
+          git config user.email "anvoltz@microsoft.com"
+          git config user.name "avoltz"
+
+          # do the merge and push
+          echo "Trying a merge from upstream/${{ env.UPSTREAM_BRANCH }}"
+          git merge "upstream/${{ env.UPSTREAM_BRANCH }}"
+          echo "Pushing update to origin"
+          git push origin "${BRANCH}"
+
+          # if there was no existing pr, create one
+          if git diff --quiet "${BRANCH}" "upstream/${UPSTREAM_BRANCH}"; then
+              echo "No differences found, nothing to do"
+          elif [ -z "${PR_BRANCH}" ]; then
+              gh pr create --base "${{ env.FORK_BRANCH }}" --head "${BRANCH}" -t "chore: sync from upstream" -b "This is an automated pull by github actions" --label pullupstream
+          fi
