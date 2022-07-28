@@ -135,9 +135,9 @@ func TestSendUnmount(t *testing.T) {
 
 func TestMain(m *testing.M) {
 	klog.InitFlags(nil)
-	flag.Set("logtostderr", "false")
-	flag.Set("alsologtostderr", "false")
-	flag.Set("stderrthreshold", "10")
+	_ = flag.Set("logtostderr", "false")
+	_ = flag.Set("alsologtostderr", "false")
+	_ = flag.Set("stderrthreshold", "10")
 	klog.SetOutput(io.Discard)
 	os.Exit(m.Run())
 }

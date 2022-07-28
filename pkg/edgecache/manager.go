@@ -45,7 +45,7 @@ func GetStagingPath(path string) string {
 	return filepath.Join(path, "edgecache")
 }
 
-func sendGetVolume(client cache_volume_service.CacheVolumeClient, account string, container string) (error, bool) {
+func sendGetVolume(client cache_volume_service.CacheVolumeClient, account string, container string) (bool, error) {
 	blobVolumeName := blob_cache_volume.Name{
 		Account:   &account,
 		Container: &container,
@@ -59,11 +59,11 @@ func sendGetVolume(client cache_volume_service.CacheVolumeClient, account string
 	getRsp, err := client.GetBlob(context.TODO(), &getReq)
 	if err != nil {
 		klog.Errorf("GRPC call returned with an error: %v", err)
-		return err, false
+		return false, err
 	}
 	klog.V(2).Infof("GetBlob found %d volumes", len(getRsp.Volumes))
 	found := len(getRsp.Volumes) > 0
-	return err, found
+	return found, err
 }
 
 func sendCreateVolume(client cache_volume_service.CacheVolumeClient, account string, container string, key string) error {
@@ -93,13 +93,13 @@ func sendCreateVolume(client cache_volume_service.CacheVolumeClient, account str
 	return nil
 }
 
-func sendMount(client csi_mounts.CSIMountsClient, account string, container string, target_path string, interval time.Duration, timeout time.Duration) error {
+func sendMount(client csi_mounts.CSIMountsClient, account string, container string, targetPath string, interval time.Duration, timeout time.Duration) error {
 	blobVolume := blob_cache_volume.Name{
 		Account:   &account,
 		Container: &container,
 	}
 	addReq := csi_mounts.AddMountReq{
-		TargetPath: &target_path,
+		TargetPath: &targetPath,
 		VolumeInfo: &csi_mounts.VolumeInfo{
 			VolumeInfo: &csi_mounts.VolumeInfo_BlobVolume{
 				BlobVolume: &blobVolume,
@@ -134,14 +134,14 @@ func sendMount(client csi_mounts.CSIMountsClient, account string, container stri
 	case <-result:
 		klog.V(2).Infof("edge cache AddMount success")
 	case <-time.After(timeout):
-		return status.Errorf(codes.DeadlineExceeded, "Deadline exceeded for mount %q", target_path)
+		return status.Errorf(codes.DeadlineExceeded, "Deadline exceeded for mount %q", targetPath)
 	}
 	return nil
 }
 
-func sendUnmount(client csi_mounts.CSIMountsClient, target_path string) error {
+func sendUnmount(client csi_mounts.CSIMountsClient, targetPath string) error {
 	rmReq := csi_mounts.RemoveMountReq{
-		TargetPath: &target_path,
+		TargetPath: &targetPath,
 	}
 
 	klog.V(2).Infof("Calling RemoveMount: %s", &rmReq)
@@ -153,7 +153,7 @@ func sendUnmount(client csi_mounts.CSIMountsClient, target_path string) error {
 }
 
 func createVolume(client cache_volume_service.CacheVolumeClient, accountName string, accountKey string, containerName string) error {
-	if err, found := sendGetVolume(client, accountName, containerName); err != nil {
+	if found, err := sendGetVolume(client, accountName, containerName); err != nil {
 		return err
 	} else if !found {
 		klog.V(2).Infof("volume does not exist, creating...")
@@ -176,7 +176,7 @@ func (m *Manager) EnsureVolume(accountName string, accountKey string, containerN
 	return createVolume(client, accountName, accountKey, containerName)
 }
 
-func (m *Manager) MountVolume(account string, container string, target_path string) error {
+func (m *Manager) MountVolume(account string, container string, targetPath string) error {
 	connectionTimeout := time.Duration(m.connectTimeout) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
 	defer cancel()
@@ -187,7 +187,7 @@ func (m *Manager) MountVolume(account string, container string, target_path stri
 	defer conn.Close()
 
 	client := csi_mounts.NewCSIMountsClient(conn)
-	return sendMount(client, account, container, target_path, 500*time.Millisecond, 5*time.Second)
+	return sendMount(client, account, container, targetPath, 500*time.Millisecond, 5*time.Second)
 }
 
 func (m *Manager) UnmountVolume(volumeID string, targetPath string) error {
