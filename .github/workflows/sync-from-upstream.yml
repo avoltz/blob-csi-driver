@@ -38,7 +38,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -e
+          set -ex
           # check if a PR branch exists already
           PR_BRANCH=$(gh pr list --label pullupstream --json 'headRefName' -q '.[-1] | .headRefName')
           DEFAULT_PR_BRANCH=actions/pullupstream
@@ -57,14 +57,15 @@ jobs:
           git config user.name "avoltz"
 
           # do the merge and push
-          echo "Trying a merge from upstream/${{ env.UPSTREAM_BRANCH }}"
+          echo "-- Trying a merge from upstream/${{ env.UPSTREAM_BRANCH }}"
           git merge "upstream/${{ env.UPSTREAM_BRANCH }}"
-          echo "Pushing update to origin"
-          git push origin "${BRANCH}"
 
           # if there was no existing pr, create one
-          if git diff --quiet "${BRANCH}" "upstream/${UPSTREAM_BRANCH}"; then
-              echo "No differences found, nothing to do"
+          if git diff --quiet "${BRANCH}" "origin/${{ env.FORK_BRANCH }}"; then
+              echo "-- No differences found, nothing to do"
           elif [ -z "${PR_BRANCH}" ]; then
+              echo "-- Pushing update to origin"
+              git push origin "${BRANCH}"
+              echo "-- Creating PR"
               gh pr create --base "${{ env.FORK_BRANCH }}" --head "${BRANCH}" -t "chore: sync from upstream" -b "This is an automated pull by github actions" --label pullupstream
           fi
