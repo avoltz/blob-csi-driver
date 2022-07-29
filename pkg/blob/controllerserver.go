@@ -74,6 +74,8 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	// set allowBlobPublicAccess as false by default
 	allowBlobPublicAccess := to.BoolPtr(false)
 
+	containerNameReplaceMap := map[string]string{}
+
 	// store account key to k8s secret by default
 	storeAccountKey := true
 
@@ -121,10 +123,11 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			}
 		case pvcNamespaceKey:
 			pvcNamespace = v
+			containerNameReplaceMap[pvcNamespaceMetadata] = v
 		case pvcNameKey:
-			// no op
+			containerNameReplaceMap[pvcNameMetadata] = v
 		case pvNameKey:
-			// no op
+			containerNameReplaceMap[pvNameMetadata] = v
 		case serverNameField:
 			// no op, only used in NodeStageVolume
 		case storageEndpointSuffixField:
@@ -224,7 +227,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 
 	tags, err := util.ConvertTagsToMap(customTags)
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.InvalidArgument, err.Error())
 	}
 
 	accountOptions := &azure.AccountOptions{
@@ -257,7 +260,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			// search in cache first
 			cache, err := d.accountSearchCache.Get(lockKey, azcache.CacheReadTypeDefault)
 			if err != nil {
-				return nil, err
+				return nil, status.Errorf(codes.Internal, err.Error())
 			}
 			if cache != nil {
 				accountName = cache.(string)
@@ -292,6 +295,8 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		secrets = createStorageAccountSecret(accountName, accountKey)
 	}
 
+	// replace pv/pvc name namespace metadata in subDir
+	containerName = replaceWithMap(containerName, containerNameReplaceMap)
 	validContainerName := containerName
 	if validContainerName == "" {
 		validContainerName = volName
@@ -299,7 +304,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			validContainerName = containerNamePrefix + "-" + volName
 		}
 		validContainerName = getValidContainerName(validContainerName, protocol)
-		parameters[containerNameField] = validContainerName
+		setKeyValueInMap(parameters, containerNameField, validContainerName)
 	}
 
 	var volumeID string
@@ -346,7 +351,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 
 	isOperationSucceeded = true
 	// reset secretNamespace field in VolumeContext
-	parameters[secretNamespaceField] = secretNamespace
+	setKeyValueInMap(parameters, secretNamespaceField, secretNamespace)
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
 			VolumeId:      volumeID,
@@ -364,7 +369,7 @@ func (d *Driver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest)
 	}
 
 	if err := d.ValidateControllerServiceRequest(csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME); err != nil {
-		return nil, fmt.Errorf("invalid delete volume req: %v", req)
+		return nil, status.Errorf(codes.Internal, "invalid delete volume req: %v", req)
 	}
 
 	if acquired := d.volumeLocks.TryAcquire(volumeID); !acquired {
@@ -519,7 +524,7 @@ func (d *Driver) ControllerExpandVolume(ctx context.Context, req *csi.Controller
 	}
 
 	if err := d.ValidateControllerServiceRequest(csi.ControllerServiceCapability_RPC_EXPAND_VOLUME); err != nil {
-		return nil, fmt.Errorf("invalid expand volume req: %v", req)
+		return nil, status.Errorf(codes.Internal, "invalid expand volume req: %v", req)
 	}
 
 	volSizeBytes := int64(req.GetCapacityRange().GetRequiredBytes())

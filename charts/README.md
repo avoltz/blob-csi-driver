@@ -6,8 +6,7 @@
 ### Tips
  - configure with [blobfuse-proxy](../deploy/blobfuse-proxy) to make blobfuse mount still available after driver restart
    - specify `node.enableBlobfuseProxy=true` together with [blobfuse-proxy](../deploy/blobfuse-proxy)
- - make controller only run on master node: `--set controller.runOnMaster=true`
- - enable `fsGroupPolicy` on a k8s 1.20+ cluster: `--set feature.enableFSGroupPolicy=true`
+ - run controller on control plane node: `--set controller.runOnControlPlane=true`
  - set replica of controller as `1`: `--set controller.replicas=1`
  - specify different cloud config secret for the driver:
    - `--set controller.cloudConfigSecretName`
@@ -19,7 +18,7 @@
 ### install a specific version
 ```console
 helm repo add blob-csi-driver https://raw.githubusercontent.com/kubernetes-sigs/blob-csi-driver/master/charts
-helm install blob-csi-driver blob-csi-driver/blob-csi-driver --set node.enableBlobfuseProxy=true --namespace kube-system --version v1.13.0
+helm install blob-csi-driver blob-csi-driver/blob-csi-driver --set node.enableBlobfuseProxy=true --namespace kube-system --version v1.15.0
 ```
 
 ## install on Azure Stack
@@ -62,20 +61,20 @@ The following table lists the configurable parameters of the latest Azure Blob S
 | `feature.enableFSGroupPolicy`                         | enable `fsGroupPolicy` on a k8s 1.20+ cluster         | `false`                      |
 | `feature.enableGetVolumeStats`                        | allow GET_VOLUME_STATS on agent node                  | `false`                      |
 | `image.baseRepo`                                      | base repository of driver images                      | `mcr.microsoft.com`                      |
-| `image.blob.repository`                               | blob-csi-driver docker image                          | `mcr.microsoft.com/k8s/csi/blob-csi`                             |
+| `image.blob.repository`                               | blob-csi-driver docker image                          | `mcr.microsoft.com/oss/kubernetes-csi/blob-csi`                             |
 | `image.blob.tag`                                      | blob-csi-driver docker image tag                      | `latest`                                                         |
 | `image.blob.pullPolicy`                               | blob-csi-driver image pull policy                     | `IfNotPresent`                                                   |
 | `image.csiProvisioner.repository`                     | csi-provisioner docker image                          | `mcr.microsoft.com/oss/kubernetes-csi/csi-provisioner`           |
-| `image.csiProvisioner.tag`                            | csi-provisioner docker image tag                      | `v3.1.0`                                                         |
+| `image.csiProvisioner.tag`                            | csi-provisioner docker image tag                      | `v3.2.0`                                                         |
 | `image.csiProvisioner.pullPolicy`                     | csi-provisioner image pull policy                     | `IfNotPresent`                                                   |
 | `image.livenessProbe.repository`                      | liveness-probe docker image                           | `mcr.microsoft.com/oss/kubernetes-csi/livenessprobe`             |
-| `image.livenessProbe.tag`                             | liveness-probe docker image tag                       | `v2.6.0`                                                         |
+| `image.livenessProbe.tag`                             | liveness-probe docker image tag                       | `v2.7.0`                                                         |
 | `image.livenessProbe.pullPolicy`                      | liveness-probe image pull policy                      | `IfNotPresent`                                                   |
 | `image.nodeDriverRegistrar.repository`                | csi-node-driver-registrar docker image                | `mcr.microsoft.com/oss/kubernetes-csi/csi-node-driver-registrar` |
-| `image.nodeDriverRegistrar.tag`                       | csi-node-driver-registrar docker image tag            | `v2.5.0`                                                      |
+| `image.nodeDriverRegistrar.tag`                       | csi-node-driver-registrar docker image tag            | `v2.5.1`                                                      |
 | `image.nodeDriverRegistrar.pullPolicy`                | csi-node-driver-registrar image pull policy           | `IfNotPresent`                                                   |
 | `image.csiResizer.repository`                         | csi-resizer docker image                              | `mcr.microsoft.com/oss/kubernetes-csi/csi-resizer`               |
-| `image.csiResizer.tag`                                | csi-resizer docker image tag                          | `v1.4.0`                                                         |
+| `image.csiResizer.tag`                                | csi-resizer docker image tag                          | `v1.5.0`                                                         |
 | `image.csiResizer.pullPolicy`                         | csi-resizer image pull policy                         | `IfNotPresent`                                                   |
 | `imagePullSecrets`                                    | Specify docker-registry secret names as an array      | [] (does not add image pull secrets to deployed pods)          |
 | `cloud`                                               | the cloud environment the driver is running on        | `AzurePublicCloud`                                               |
@@ -92,11 +91,12 @@ The following table lists the configurable parameters of the latest Azure Blob S
 | `controller.cloudConfigSecretName`                    | cloud config secret name of controller driver               | `azure-cloud-provider`
 | `controller.cloudConfigSecretNamespace`               | cloud config secret namespace of controller driver          | `kube-system`
 | `controller.allowEmptyCloudConfig`                    | Whether allow running controller driver without cloud config          | `true`
-| `controller.replicas`                                 | the replicas of csi-blob-controller                   | `2`                                                              |
+| `controller.replicas`                                 | replica number of csi-blob-controller                   | `2`                                                              |
 | `controller.hostNetwork`                              | `hostNetwork` setting on controller driver(could be disabled if controller does not depend on MSI setting)                            | `true`                                                            | `true`, `false`
 | `controller.metricsPort`                              | metrics port of csi-blob-controller                   | `29634`                                                          |
 | `controller.livenessProbe.healthPort `                | health check port for liveness probe                   | `29632` |
-| `controller.runOnMaster`                              | run controller on master node                         | `true`                                                          |
+| `controller.runOnMaster`                              | run controller on master node                         | `false`                                                          |
+| `controller.runOnControlPlane`                        | run controller on control plane node                                                          |`false`                                                           |
 | `controller.logLevel`                                 | controller driver log level                           | `5`                                                            |
 | `controller.resources.csiProvisioner.limits.memory`   | csi-provisioner memory limits                         | 100Mi                                                          |
 | `controller.resources.csiProvisioner.requests.cpu`    | csi-provisioner cpu requests                   | 10m                                                            |
