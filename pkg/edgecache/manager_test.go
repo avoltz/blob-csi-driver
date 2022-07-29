@@ -105,8 +105,8 @@ func TestSendMount(t *testing.T) {
 			},
 		},
 	}
-	interval := time.Duration(1 * time.Microsecond)
-	timeout := time.Duration(10 * time.Millisecond)
+	interval := time.Duration(10 * time.Millisecond)
+	timeout := time.Duration(100 * time.Millisecond)
 	t.Run("WorksFirstTry", func(t *testing.T) {
 		client.EXPECT().AddMount(gomock.Any(), &addReq).Times(1).Return(&successRsp, nil)
 		ret := sendMount(client, account, container, targetPath, interval, timeout)
