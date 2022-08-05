@@ -22,4 +22,3 @@ message BlobCacheVolume {
     optional Authenticator auth = 2;
     optional default_attributes.DefaultAttributes  default_attributes = 3;
 }
-

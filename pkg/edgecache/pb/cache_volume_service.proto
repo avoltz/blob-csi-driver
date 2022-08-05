@@ -21,7 +21,7 @@ message DeleteBlobResponse {
 }
 
 message GetBlobRequest {
-    repeated blob_cache_volume.Name names = 1; 
+    repeated blob_cache_volume.Name names = 1;
 }
 
 message GetBlobResponse {
@@ -29,12 +29,12 @@ message GetBlobResponse {
 }
 
 
-message ListBlobRequest {    
+message ListBlobRequest {
 }
 
 message ListBlobResponse {
     repeated blob_cache_volume.BlobCacheVolume volumes = 1;
-}    
+}
 
 service CacheVolume {
     rpc CreateBlob (CreateBlobRequest) returns (CreateBlobResponse);
