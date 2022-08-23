@@ -201,13 +201,5 @@ func (c *Controller) pvcUpdated(a interface{}, b interface{}) {
 		return
 	}
 
-	/*
-		if klog.V(3).Enabled() {
-			pvJSON, err := json.MarshalIndent(newpvc, "", "  ")
-			if err == nil {
-				klog.Infof("Got updated PVC:\n%s", pvJSON)
-			}
-		}
-	*/
 	c.queue.Add(newpvc)
 }
