@@ -243,10 +243,11 @@ func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
 		Exec:      utilexec.New(),
 	}
 
+	// When NodeID is empty, the plugin runs as controller
+	// We do not need to run the finalizer on every node, so run with controllers
 	if d.NodeID == "" && d.enableEdgeCacheFinalizer {
 		// The controller pod can run a custom controller to watch finalizers
-		// TODO: should this be a singleton thing? is it okay to run these on replicated controllers?
-		klog.V(3).Info("Starting finalizer")
+		klog.V(3).Info("Starting edgecache finalizer")
 		factory := informers.NewSharedInformerFactory(d.cloud.KubeClient, 1*time.Minute)
 		c := finalizer.NewEdgeCacheFinalizerController(d.edgeCacheManager, factory.Core().V1().PersistentVolumeClaims(), d.cloud.KubeClient)
 		ctx := context.Background()
