@@ -63,7 +63,7 @@ func GetStagingPath(path string) string {
 		during staging so that during unstaging we can check the same location and handle
 		unmount using GRPC instead of the default path.
 
-		If edge cache were a standalone CSI driver we could drop this suffix.
+		If edgecache were a standalone CSI driver we could drop this suffix.
 	*/
 	return filepath.Join(path, "edgecache")
 }
@@ -78,13 +78,13 @@ func sendGetVolume(client cache_volume_service.CacheVolumeClient, account string
 		Names: []*blob_cache_volume.Name{&blobVolumeName},
 	}
 
-	klog.V(2).Infof("calling edge cache GetBlob")
+	klog.V(3).Infof("calling edgecache GetBlob")
 	getRsp, err := client.GetBlob(context.TODO(), &getReq)
 	if err != nil {
 		klog.Errorf("GRPC call returned with an error: %v", err)
 		return false, err
 	}
-	klog.V(2).Infof("GetBlob found %d volumes", len(getRsp.Volumes))
+	klog.V(3).Infof("GetBlob found %d volumes", len(getRsp.Volumes))
 	found := len(getRsp.Volumes) > 0
 	return found, err
 }
@@ -106,13 +106,13 @@ func sendCreateVolume(client cache_volume_service.CacheVolumeClient, account str
 		Volume: &blobVolume,
 	}
 
-	klog.V(2).Infof("calling edge cache CreateBlob %s %s %d", account, container, len(key))
+	klog.V(3).Infof("calling edgecache CreateBlob %s %s %d", account, container, len(key))
 	_, err := client.CreateBlob(context.TODO(), &addReq)
 	if err != nil {
 		klog.Errorf("GRPC call returned with an error: %v", err)
 		return err
 	}
-	klog.V(2).Infof("CreateBlob succeeded")
+	klog.V(3).Infof("CreateBlob succeeded")
 	return nil
 }
 
@@ -130,7 +130,7 @@ func sendDeleteVolume(client cache_volume_service.CacheVolumeClient, account str
 	result := make(chan bool)
 	go func() {
 		for {
-			klog.V(3).Info("Sending deleteblob")
+			klog.V(3).Infof("Sending deleteblob for %s/%s", account, container)
 			_, err := client.DeleteBlob(context.TODO(), &deleteReq)
 			if err != nil {
 				klog.V(3).Info("deleteblob received error %s", err)
@@ -140,7 +140,7 @@ func sendDeleteVolume(client cache_volume_service.CacheVolumeClient, account str
 					err = nil
 				}
 				if !ok {
-					klog.V(3).Infof("invalid deleteblob error received %s", errStatus)
+					klog.Errorf("invalid deleteblob error received %s", errStatus)
 				}
 			}
 			if err != nil {
@@ -158,7 +158,7 @@ func sendDeleteVolume(client cache_volume_service.CacheVolumeClient, account str
 	}()
 	select {
 	case <-result:
-		klog.Info("DeleteBlob success")
+		klog.V(3).Infof("DeleteBlob succeeded for %s/%s", account, container)
 	case <-time.After(timeout):
 		return status.Error(codes.DeadlineExceeded, "Deadline exceeded for deleteblob")
 	}
@@ -187,7 +187,7 @@ func sendMount(client csi_mounts.CSIMountsClient, account string, container stri
 	result := make(chan bool)
 	go func() {
 		for {
-			klog.Infof("Edgecache AddMount %s, %s, %s", account, container, targetPath)
+			klog.V(3).Infof("AddMount: %s, %s, %s", account, container, targetPath)
 			_, err := client.AddMount(context.TODO(), &addReq)
 			if err != nil {
 				klog.Warningf("AddMount GRPC failed (will retry) returned with an error: %v", err)
@@ -204,7 +204,7 @@ func sendMount(client csi_mounts.CSIMountsClient, account string, container stri
 	}()
 	select {
 	case <-result:
-		klog.V(2).Infof("edge cache AddMount success")
+		klog.V(3).Infof("AddMount: succeeeded for %s/%s", account, container)
 	case <-time.After(timeout):
 		return status.Errorf(codes.DeadlineExceeded, "Deadline exceeded for mount %q", targetPath)
 	}
@@ -216,7 +216,7 @@ func sendUnmount(client csi_mounts.CSIMountsClient, targetPath string) error {
 		TargetPath: &targetPath,
 	}
 
-	klog.V(2).Infof("Calling RemoveMount: %s", &rmReq)
+	klog.V(3).Infof("RemoveMount: %s", targetPath)
 	if _, err := client.RemoveMount(context.TODO(), &rmReq); err != nil {
 		klog.Errorf("GRPC call returned with an error: %v", err)
 		return err
@@ -228,7 +228,6 @@ func createVolume(client cache_volume_service.CacheVolumeClient, accountName str
 	if found, err := sendGetVolume(client, accountName, containerName); err != nil {
 		return err
 	} else if !found {
-		klog.V(2).Infof("volume does not exist, creating...")
 		return sendCreateVolume(client, accountName, containerName, accountKey)
 	}
 	return nil

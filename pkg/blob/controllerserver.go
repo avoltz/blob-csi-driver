@@ -191,7 +191,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		return nil, status.Errorf(codes.InvalidArgument, "containerNamePrefix(%s) can only contain lowercase letters, numbers, hyphens, and length should be less than 21", containerNamePrefix)
 	}
 	if protocol == ecprotocol {
-		// TODO: call out to edge cache to validate sku
+		// TODO: call out to edgecache to validate sku
 		klog.V(2).Info("ecprotocol specified, validating storage SKU")
 	}
 

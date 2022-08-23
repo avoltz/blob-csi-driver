@@ -98,7 +98,7 @@ spec:
           args:
             - "--v={{ .Values.controller.logLevel }}"
             - "--endpoint=$(CSI_ENDPOINT)"
-            - "--edge-cache-config-endpoint=$(EDGE_CACHE_CONFIG_ENDPOINT)"
+            - "--edgecache-config-endpoint=$(EDGECACHE_CONFIG_ENDPOINT)"
             - "--metrics-address=0.0.0.0:{{ .Values.controller.metricsPort }}"
             - "--drivername={{ .Values.driver.name }}"
             - "--custom-user-agent={{ .Values.driver.customUserAgent }}"
@@ -130,7 +130,7 @@ spec:
                   optional: true
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
-            - name: EDGE_CACHE_CONFIG_ENDPOINT
+            - name: EDGECACHE_CONFIG_ENDPOINT
               value: "{{ .Values.edgecache.configEndpoint }}"
             - name: AZURE_GO_SDK_LOG_LEVEL
               value: {{ .Values.driver.azureGoSDKLogLevel }}

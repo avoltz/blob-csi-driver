@@ -116,8 +116,8 @@ spec:
           args:
             - "--v=5"
             - "--endpoint=$(CSI_ENDPOINT)"
-            - "--edge-cache-config-endpoint=$(EDGE_CACHE_CONFIG_ENDPOINT)"
-            - "--edge-cache-mount-endpoint=$(EDGE_CACHE_MOUNT_ENDPOINT)"
+            - "--edgecache-config-endpoint=$(EDGECACHE_CONFIG_ENDPOINT)"
+            - "--edgecache-mount-endpoint=$(EDGECACHE_MOUNT_ENDPOINT)"
             - "--enable-blobfuse-proxy=false"
             - "--blobfuse-proxy-endpoint=$(BLOBFUSE_PROXY_ENDPOINT)"
             - "--nodeid=$(KUBE_NODE_NAME)"
@@ -144,9 +144,9 @@ spec:
                   optional: true
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
-            - name: EDGE_CACHE_CONFIG_ENDPOINT
+            - name: EDGECACHE_CONFIG_ENDPOINT
               value: hydrad-config:8675
-            - name: EDGE_CACHE_MOUNT_ENDPOINT
+            - name: EDGECACHE_MOUNT_ENDPOINT
               value: unix:///csi/csi_mounts.sock
             - name: BLOBFUSE_PROXY_ENDPOINT
               value: unix:///csi/blobfuse-proxy.sock

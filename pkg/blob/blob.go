@@ -248,7 +248,7 @@ func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
 		// TODO: should this be a singleton thing? is it okay to run these on replicated controllers?
 		klog.V(3).Info("Starting finalizer")
 		factory := informers.NewSharedInformerFactory(d.cloud.KubeClient, 1*time.Minute)
-		c := finalizer.NewHydraFinalizerController(d.edgeCacheManager, factory.Core().V1().PersistentVolumeClaims(), d.cloud.KubeClient)
+		c := finalizer.NewEdgeCacheFinalizerController(d.edgeCacheManager, factory.Core().V1().PersistentVolumeClaims(), d.cloud.KubeClient)
 		ctx := context.Background()
 		factory.Start(ctx.Done())
 		go c.Run(ctx, 5)

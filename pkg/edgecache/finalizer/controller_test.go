@@ -61,7 +61,7 @@ func NewFakeFinalizer(client *fake.Clientset, mgr *mock_manager.MockManagerInter
 	}
 	informers := informers.NewSharedInformerFactory(client, 0)
 	pvcInformer := informers.Core().V1().PersistentVolumeClaims()
-	return NewHydraFinalizerController(mgr, pvcInformer, client), informers
+	return NewEdgeCacheFinalizerController(mgr, pvcInformer, client), informers
 }
 
 func TestFinalizerRequires(t *testing.T) {
@@ -70,10 +70,10 @@ func TestFinalizerRequires(t *testing.T) {
 	informers := informers.NewSharedInformerFactory(client, 0)
 	pvcInformer := informers.Core().V1().PersistentVolumeClaims()
 	t.Run("KubeClient", func(t *testing.T) {
-		assert.Nil(t, NewHydraFinalizerController(mgr, pvcInformer, nil))
+		assert.Nil(t, NewEdgeCacheFinalizerController(mgr, pvcInformer, nil))
 	})
 	t.Run("EdgeCacheManager", func(t *testing.T) {
-		assert.Nil(t, NewHydraFinalizerController(nil, pvcInformer, client))
+		assert.Nil(t, NewEdgeCacheFinalizerController(nil, pvcInformer, client))
 	})
 }
 

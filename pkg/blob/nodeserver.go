@@ -108,13 +108,13 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		return nil, status.Error(codes.InvalidArgument, "Staging target not provided")
 	}
 
-	// check if the source is a mount point, if so we are not edge cache
+	// check if the source is a mount point, if so we are not edgecache
 	sourceNotMounted, err := d.mounter.IsLikelyNotMountPoint(source)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "Error checking staging target mount")
 	}
 	if sourceNotMounted {
-		// check for edge cache
+		// check for edgecache
 		edgeCacheStagingMount := edgecache.GetStagingPath(source)
 		dirInfo, err := os.Stat(edgeCacheStagingMount)
 		if err == nil && dirInfo != nil && dirInfo.IsDir() {
@@ -282,7 +282,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 
 	if protocol == ecprotocol {
 		targetPath = edgecache.GetStagingPath(targetPath)
-		klog.V(2).Infof("NodeStageVolume: cache enabled for volume, will mount to: %q", targetPath)
+		klog.V(2).Infof("NodeStageVolume: edgecache enabled for volume, will mount to: %q", targetPath)
 	}
 
 	mnt, err := d.ensureMountPoint(targetPath, fs.FileMode(mountPermissions))
@@ -316,8 +316,8 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	}
 
 	if protocol == ecprotocol {
-		klog.V(2).Infof("cache enabled, edge cache will be used")
-		klog.V(2).Infof("edgecache attrib %v", attrib)
+		klog.V(2).Infof("edgecache will be used for volume %s", volumeID)
+		klog.V(3).Infof("edgecache attrib %v", attrib)
 		pvName, exists := attrib[pvNameKey]
 		var pv *v1.PersistentVolume
 		if exists {
@@ -457,13 +457,13 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolu
 
 	// Check if there is a mount at the edgecache suffix
 	edgeCacheTargetPath := edgecache.GetStagingPath(stagingTargetPath)
-	klog.Errorf("NodeUnstageVolume: checking %s for edge cache %s", volumeID, edgeCacheTargetPath)
+	klog.Errorf("NodeUnstageVolume: checking %s for edgecache %s", volumeID, edgeCacheTargetPath)
 	isNotEdgeCacheVolume, err := d.mounter.IsLikelyNotMountPoint(edgeCacheTargetPath)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, status.Errorf(codes.Internal, "unexpected error checking staging path %q: %v", stagingTargetPath, err)
 	}
 	if !isNotEdgeCacheVolume {
-		// This is an edge cache mount path so unmount it and clean it up
+		// This is an edgecache mount path so unmount it and clean it up
 		if err := d.edgeCacheManager.UnmountVolume(volumeID, edgeCacheTargetPath); err != nil {
 			return nil, err
 		}

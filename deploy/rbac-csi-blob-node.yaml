@@ -15,7 +15,7 @@ rules:
     resources: ["secrets"]
     verbs: ["get"]
 
-    # the node plugin must apply finalizers to PV and PVC for edge cache volumes
+    # the node plugin must apply finalizers to PV and PVC for edgecache volumes
     # for static pv, pv list is used to resolve volumeID --> PV mapping
   - apiGroups: [""]
     resources: ["persistentvolumes"]

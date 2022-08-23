@@ -73,7 +73,7 @@ spec:
           args:
             - "--v=5"
             - "--endpoint=$(CSI_ENDPOINT)"
-            - "--edge-cache-config-endpoint=$(EDGE_CACHE_CONFIG_ENDPOINT)"
+            - "--edgecache-config-endpoint=$(EDGECACHE_CONFIG_ENDPOINT)"
             - "--metrics-address=0.0.0.0:29634"
             - "--user-agent-suffix=OSS-kubectl"
           ports:
@@ -100,7 +100,7 @@ spec:
                   optional: true
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
-            - name: EDGE_CACHE_CONFIG_ENDPOINT
+            - name: EDGECACHE_CONFIG_ENDPOINT
               value: "hydrad-config:8675"
           volumeMounts:
             - mountPath: /csi

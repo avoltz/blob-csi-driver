@@ -43,8 +43,8 @@ import (
 const (
 	finalizerName          string = "external/blob-csi-driver-edgecache"
 	pvcProtectionFinalizer string = "kubernetes.io/pvc-protection"
-	accountAnnotation      string = "external/edge-cache-account"
-	containerAnnotation    string = "external/edge-cache-container"
+	accountAnnotation      string = "external/edgecache-account"
+	containerAnnotation    string = "external/edgecache-container"
 )
 
 // Controller is controller that removes PVProtectionFinalizer
@@ -62,25 +62,25 @@ type Controller struct {
 	ecManager edgecache.ManagerInterface
 }
 
-// NewHydraFinalizerController returns a new *Controller.
-func NewHydraFinalizerController(manager edgecache.ManagerInterface, pvcInformer coreinformers.PersistentVolumeClaimInformer, client clientset.Interface) *Controller {
+// NewEdgeCacheFinalizerController returns a new *Controller.
+func NewEdgeCacheFinalizerController(manager edgecache.ManagerInterface, pvcInformer coreinformers.PersistentVolumeClaimInformer, client clientset.Interface) *Controller {
 	c := &Controller{
 		client: client,
-		queue:  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "hydrafinalizer"),
+		queue:  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "edgecachefinalizer"),
 	}
 	if client == nil {
-		klog.Error("Hydra Finalizer requires client")
+		klog.Error("edgecache finalizer requires client")
 		return nil
 	}
 	if manager == nil {
-		klog.Error("Hydra Finalizer requires edgecache manager")
+		klog.Error("edgecache finalizer requires edgecache manager")
 		return nil
 	}
 	limiter := client.CoreV1().RESTClient().GetRateLimiter()
 	if limiter != nil {
-		err := ratelimiter.RegisterMetricAndTrackRateLimiterUsage("hydra_finalizer_controller", limiter)
+		err := ratelimiter.RegisterMetricAndTrackRateLimiterUsage("edgecache_finalizer_controller", limiter)
 		if err != nil {
-			klog.Errorf("Unable to register ratelimiter")
+			klog.Errorf("unable to register ratelimiter")
 			return nil
 		}
 	}
@@ -96,9 +96,9 @@ func NewHydraFinalizerController(manager edgecache.ManagerInterface, pvcInformer
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartLogging(klog.Infof)
 	broadcaster.StartRecordingToSink(&corev1.EventSinkImpl{Interface: client.CoreV1().Events(v1.NamespaceAll)})
-	c.eventRecorder = broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "hydrafinalizer"})
+	c.eventRecorder = broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "edgecachefinalizer"})
 
-	klog.V(2).Infof("NewHydraFinalizerController: complete")
+	klog.V(3).Infof("NewEdgecacheFinalizerController: complete")
 	return c
 }
 
@@ -107,25 +107,24 @@ func (c *Controller) Run(ctx context.Context, workers int) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
-	klog.Infof("Starting Hydra Finalizer controller")
-	defer klog.Infof("Shutting down Hydra Finalizer controller")
+	klog.V(3).Infof("Starting edgecache finalizer controller")
+	defer klog.V(3).Infof("Shutting down edgecache finalizer controller")
 
-	if !cache.WaitForNamedCacheSync("hydrafinalizer", ctx.Done(), c.pvcListerSynced) {
+	if !cache.WaitForNamedCacheSync("edgecachefinalizer", ctx.Done(), c.pvcListerSynced) {
 		return
 	}
 
-	klog.V(2).Infof("Waiting on workers")
+	klog.V(3).Infof("edgecache finalizer controller waiting on workers")
 	for i := 0; i < workers; i++ {
 		go wait.UntilWithContext(ctx, c.runWorker, time.Second)
 	}
 
 	<-ctx.Done()
-	klog.Infof("Return Run")
 }
 
 func (c *Controller) runWorker(ctx context.Context) {
 	for c.processNextWorkItem(ctx) {
-		klog.Info("processed next item")
+		klog.V(3).Info("edgecache finalizer controller processed next item")
 	}
 }
 
@@ -153,17 +152,15 @@ func (c *Controller) processNextWorkItem(ctx context.Context) bool {
 
 func (c *Controller) processPVC(pvc *v1.PersistentVolumeClaim) error {
 	pvName := pvc.Spec.VolumeName
-	klog.Infof("Processing PVC %s:%s for PV %s", pvc.Namespace, pvc.Name, pvName)
+	klog.V(3).Infof("Processing PVC %s:%s for PV %s", pvc.Namespace, pvc.Name, pvName)
 	// track the duration
 	startTime := time.Now()
-	defer func() {
-		klog.V(4).Infof("Finished processing (%v)", pvName, time.Since(startTime))
-	}()
+	defer klog.V(3).Infof("Finished processing (%v)", pvName, time.Since(startTime))
 
 	// get the latest pv object
 	pv, err := c.client.CoreV1().PersistentVolumes().Get(context.TODO(), pvName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		klog.Infof("%s not found, ignoring", pvName)
+		klog.Warningf("PV %s not found, ignoring", pvName)
 		return nil
 	}
 	if err != nil {
@@ -176,7 +173,7 @@ func (c *Controller) processPVC(pvc *v1.PersistentVolumeClaim) error {
 	}
 	// wait for the PVC to be deleted before cleaning up the volume
 	if pvc.GetDeletionTimestamp() == nil {
-		klog.Infof("PVC is not being deleted, ignoring")
+		klog.V(3).Infof("PVC is not being deleted, ignoring")
 		return nil
 	}
 	// We always add the finalizer from node plugin so might as well use an annotation here!
@@ -184,8 +181,8 @@ func (c *Controller) processPVC(pvc *v1.PersistentVolumeClaim) error {
 	if err != nil {
 		return err
 	}
-	klog.Infof("Edge Cache volume deleted, removing finalizer")
-	// edge cache delete success, remove the finalizer
+	klog.V(2).Infof("edgecache volume deleted, removing finalizer")
+	// edgecache delete success, remove the finalizer
 	return RemoveFinalizer(c.client, pv, pvc)
 }
 

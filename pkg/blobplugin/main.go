@@ -38,9 +38,9 @@ func init() {
 var (
 	endpoint                               = flag.String("endpoint", "unix://tmp/csi.sock", "CSI endpoint")
 	blobfuseProxyEndpoint                  = flag.String("blobfuse-proxy-endpoint", "unix://tmp/blobfuse-proxy.sock", "blobfuse-proxy endpoint")
-	edgeCacheConfigEndpoint                = flag.String("edge-cache-config-endpoint", "hydrad-config:8675", "edge cache config endpoint")
-	edgeCacheMountEndpoint                 = flag.String("edge-cache-mount-endpoint", "unix://tmp/csi-mounts.sock", "edge cache mount endpoint")
-	edgeCacheConnTimeout                   = flag.Int("edge-cache-connect-timeout", 5, "edge cache connection timeout(seconds)")
+	edgeCacheConfigEndpoint                = flag.String("edgecache-config-endpoint", "hydrad-config:8675", "edgecache config endpoint")
+	edgeCacheMountEndpoint                 = flag.String("edgecache-mount-endpoint", "unix://tmp/csi-mounts.sock", "edgecache mount endpoint")
+	edgeCacheConnTimeout                   = flag.Int("edgecache-connect-timeout", 5, "edgecache connection timeout(seconds)")
 	nodeID                                 = flag.String("nodeid", "", "node id")
 	version                                = flag.Bool("version", false, "Print the version and exit.")
 	metricsAddress                         = flag.String("metrics-address", "0.0.0.0:29634", "export the metrics")
