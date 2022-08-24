@@ -206,7 +206,7 @@ entries:
     digest: 45a485bddf4ba0d776c4c872ce89fb880a1fe926fb040528d2aa3e5a28e4767f
     name: blob-csi-driver
     urls:
-    - https://raw.githubusercontent.com/avoltz/blob-csi-driver/anvoltz/finalizer/charts/latest/blob-csi-driver-v0.0.0.tgz
+    - https://raw.githubusercontent.com/avoltz/blob-csi-driver/staging/charts/latest/blob-csi-driver-v0.0.0.tgz
     version: v0.0.0
   blobfuse-csi-driver:
   - apiVersion: v1
