@@ -17,6 +17,7 @@ limitations under the License.
 package edgecache
 
 import (
+	"errors"
 	"flag"
 	"io"
 	"os"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
@@ -35,18 +37,12 @@ import (
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/mock_csi_mounts"
 )
 
-func NewFakeManager() *Manager {
-	return NewManager(5, "", "")
-}
-
-func TestNewFakeManager(t *testing.T) {
-	m := NewFakeManager()
-	assert.NotNil(t, m)
+func TestGetStagingPath(t *testing.T) {
+	assert.Regexp(t, `^hello[\\/]edgecache$`, GetStagingPath("hello"))
 }
 
 func TestCreateVolume(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	client := mock_cache_volume_service.NewMockCacheVolumeClient(ctrl)
 	account := "account"
 	container := "container"
 	key := "key"
@@ -69,6 +65,7 @@ func TestCreateVolume(t *testing.T) {
 	}
 	createRsp := cache_volume_service.CreateBlobResponse{}
 	t.Run("NoBlobFoundWillCreate", func(t *testing.T) {
+		client := mock_cache_volume_service.NewMockCacheVolumeClient(ctrl)
 		getRsp := cache_volume_service.GetBlobResponse{}
 		client.EXPECT().GetBlob(gomock.Any(), &getReq).Times(1).Return(&getRsp, nil)
 		client.EXPECT().CreateBlob(gomock.Any(), &createReq).Times(1).Return(&createRsp, nil)
@@ -76,7 +73,25 @@ func TestCreateVolume(t *testing.T) {
 		assert.Nil(t, err)
 
 	})
+	t.Run("CreateBlobFailReturnsErr", func(t *testing.T) {
+		client := mock_cache_volume_service.NewMockCacheVolumeClient(ctrl)
+		getRsp := cache_volume_service.GetBlobResponse{}
+		err := status.Errorf(codes.Internal, "")
+		client.EXPECT().GetBlob(gomock.Any(), &getReq).Times(1).Return(&getRsp, nil)
+		client.EXPECT().CreateBlob(gomock.Any(), &createReq).Times(1).Return(nil, err)
+		ret := createVolume(client, account, key, container)
+		assert.Equal(t, err, ret)
+	})
+	t.Run("GetBlobErrorReturnsErr", func(t *testing.T) {
+		client := mock_cache_volume_service.NewMockCacheVolumeClient(ctrl)
+		err := status.Errorf(codes.Internal, "")
+		client.EXPECT().GetBlob(gomock.Any(), &getReq).Times(1).Return(nil, err)
+		client.EXPECT().CreateBlob(gomock.Any(), &createReq).Times(0)
+		ret := createVolume(client, account, key, container)
+		assert.Equal(t, err, ret)
+	})
 	t.Run("BlobFoundDoesNotCreate", func(t *testing.T) {
+		client := mock_cache_volume_service.NewMockCacheVolumeClient(ctrl)
 		getRsp := cache_volume_service.GetBlobResponse{
 			Volumes: []*blob_cache_volume.BlobCacheVolume{&rspVolume},
 		}
@@ -87,9 +102,58 @@ func TestCreateVolume(t *testing.T) {
 	})
 }
 
+func TestDeleteVolume(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	account := "account"
+	container := "container"
+	name := blob_cache_volume.Name{
+		Account:   &account,
+		Container: &container,
+	}
+	delReq := cache_volume_service.DeleteBlobRequest{
+		Name: &name,
+	}
+
+	interval := time.Duration(1 * time.Millisecond)
+	timeout := time.Duration(200 * time.Millisecond)
+	t.Run("NotFoundIsSuccess", func(t *testing.T) {
+		client := mock_cache_volume_service.NewMockCacheVolumeClient(ctrl)
+		client.EXPECT().DeleteBlob(gomock.Any(), &delReq).Times(1).Return(nil, status.Errorf(codes.NotFound, ""))
+		err := sendDeleteVolume(client, account, container, interval, timeout)
+		assert.Nil(t, err)
+	})
+	t.Run("WillRetryOtherError", func(t *testing.T) {
+		client := mock_cache_volume_service.NewMockCacheVolumeClient(ctrl)
+		delResp := cache_volume_service.DeleteBlobResponse{}
+		gomock.InOrder(
+			client.EXPECT().DeleteBlob(gomock.Any(), &delReq).Return(nil, status.Errorf(codes.Internal, "")),
+			client.EXPECT().DeleteBlob(gomock.Any(), &delReq).Return(nil, errors.New("hello")),
+			client.EXPECT().DeleteBlob(gomock.Any(), &delReq).Return(&delResp, nil),
+		)
+		err := sendDeleteVolume(client, account, container, interval, timeout)
+		assert.Nil(t, err)
+	})
+	t.Run("CancelsEventually", func(t *testing.T) {
+		client := mock_cache_volume_service.NewMockCacheVolumeClient(ctrl)
+		client.EXPECT().DeleteBlob(gomock.Any(), &delReq).MinTimes(1).Return(nil, status.Errorf(codes.DeadlineExceeded, ""))
+		err := sendDeleteVolume(client, account, container, interval, timeout)
+		assert.NotNil(t, err)
+	})
+	// use large interval to force outer timeout cancellation
+	t.Run("TimeoutCancels", func(t *testing.T) {
+		client := mock_cache_volume_service.NewMockCacheVolumeClient(ctrl)
+		client.EXPECT().DeleteBlob(gomock.Any(), &delReq).Times(1).Return(nil, status.Errorf(codes.Internal, ""))
+		err := sendDeleteVolume(client, account, container, 1*time.Second, 10*time.Millisecond)
+		if statusErr, ok := status.FromError(err); ok {
+			assert.Equal(t, statusErr.Code(), codes.DeadlineExceeded)
+		} else {
+			assert.True(t, ok, "Unrecognized error returned from sendDeleteVolume")
+		}
+	})
+}
+
 func TestSendMount(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
 	successRsp := csi_mounts.AddMountRsp{}
 	targetPath := "target/path"
 	account := "account"
@@ -106,14 +170,16 @@ func TestSendMount(t *testing.T) {
 			},
 		},
 	}
-	interval := time.Duration(10 * time.Millisecond)
-	timeout := time.Duration(100 * time.Millisecond)
+	interval := time.Duration(1 * time.Millisecond)
+	timeout := time.Duration(200 * time.Millisecond)
 	t.Run("WorksFirstTry", func(t *testing.T) {
+		client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
 		client.EXPECT().AddMount(gomock.Any(), &addReq).Times(1).Return(&successRsp, nil)
 		ret := sendMount(client, account, container, targetPath, interval, timeout)
 		assert.Nil(t, ret)
 	})
 	t.Run("WorksWithRetries", func(t *testing.T) {
+		client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
 		gomock.InOrder(
 			client.EXPECT().AddMount(gomock.Any(), &addReq).Return(nil, status.Errorf(codes.Internal, "")),
 			client.EXPECT().AddMount(gomock.Any(), &addReq).Return(&successRsp, nil),
@@ -122,30 +188,60 @@ func TestSendMount(t *testing.T) {
 		assert.Nil(t, ret)
 	})
 	t.Run("CancelsEventually", func(t *testing.T) {
+		client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
 		client.EXPECT().AddMount(gomock.Any(), &addReq).MinTimes(1).Return(nil, status.Errorf(codes.DeadlineExceeded, ""))
 		ret := sendMount(client, account, container, targetPath, interval, timeout)
 		assert.NotNil(t, ret)
+	})
+	// use large interval to force outer timeout cancellation
+	t.Run("TimeoutCancels", func(t *testing.T) {
+		client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
+		client.EXPECT().AddMount(gomock.Any(), &addReq).Times(1).Return(nil, status.Errorf(codes.Internal, ""))
+		err := sendMount(client, account, container, targetPath, 1*time.Second, 10*time.Millisecond)
+		if statusErr, ok := status.FromError(err); ok {
+			assert.Equal(t, statusErr.Code(), codes.DeadlineExceeded)
+		} else {
+			assert.True(t, ok, "Unrecognized error returned from sendMount")
+		}
 	})
 }
 
 func TestSendUnmount(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
 	targetPath := "target/path"
 	rmReq := csi_mounts.RemoveMountReq{
 		TargetPath: &targetPath,
 	}
 	rmRsp := csi_mounts.RemoveMountRsp{}
 	t.Run("Success", func(t *testing.T) {
+		client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
 		client.EXPECT().RemoveMount(gomock.Any(), &rmReq).Times(1).Return(&rmRsp, nil)
 		ret := sendUnmount(client, targetPath)
 		assert.Nil(t, ret)
 	})
 	t.Run("Fail", func(t *testing.T) {
+		client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
 		err := status.Errorf(codes.Internal, "")
 		client.EXPECT().RemoveMount(gomock.Any(), &rmReq).Times(1).Return(nil, err)
 		ret := sendUnmount(client, targetPath)
 		assert.Equal(t, ret, err)
+	})
+}
+
+func TestCallWithConnection(t *testing.T) {
+	mgr := NewManager(5, "", "")
+	t.Run("CalledReturnIsRetured", func(t *testing.T) {
+		err := errors.New("hello")
+		ret := mgr.callWithConnection(func(conn grpc.ClientConnInterface) error {
+			return err
+		}, "endpoint")
+		assert.Equal(t, ret, err)
+	})
+	t.Run("CalledReturnNilIsReturned", func(t *testing.T) {
+		ret := mgr.callWithConnection(func(conn grpc.ClientConnInterface) error {
+			return nil
+		}, "endpoint")
+		assert.Nil(t, ret)
 	})
 }
 

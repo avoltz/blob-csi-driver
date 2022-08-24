@@ -48,12 +48,13 @@ const (
 
 func NewFakeDriver() *Driver {
 	driverOptions := DriverOptions{
-		NodeID:                  fakeNodeID,
-		DriverName:              DefaultDriverName,
-		BlobfuseProxyEndpoint:   "",
-		EnableBlobfuseProxy:     false,
-		BlobfuseProxyConnTimout: 5,
-		EnableBlobMockMount:     false,
+		NodeID:                   fakeNodeID,
+		DriverName:               DefaultDriverName,
+		BlobfuseProxyEndpoint:    "",
+		EnableBlobfuseProxy:      false,
+		EnableEdgeCacheFinalizer: false,
+		BlobfuseProxyConnTimout:  5,
+		EnableBlobMockMount:      false,
 	}
 	driver := NewDriver(&driverOptions)
 	driver.Name = fakeDriverName
@@ -1015,7 +1016,7 @@ func TestSetKeyValueInMap(t *testing.T) {
 			expected: map[string]string{"subDir": "value"},
 		},
 		{
-			desc:     "case insentive key already exists",
+			desc:     "case insensitive key already exists",
 			m:        map[string]string{"subDir": "value2"},
 			key:      "subdir",
 			value:    "value",

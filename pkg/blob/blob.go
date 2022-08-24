@@ -30,8 +30,9 @@ import (
 	"golang.org/x/net/context"
 
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	k8sutil "k8s.io/kubernetes/pkg/volume/util"
@@ -40,6 +41,7 @@ import (
 
 	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
+	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/finalizer"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
@@ -139,6 +141,7 @@ type DriverOptions struct {
 	EdgeCacheConfigEndpoint                string
 	EdgeCacheMountEndpoint                 string
 	EnableBlobfuseProxy                    bool
+	EnableEdgeCacheFinalizer               bool
 	BlobfuseProxyConnTimout                int
 	EdgeCacheConnTimeout                   int
 	EnableBlobMockMount                    bool
@@ -162,6 +165,7 @@ type Driver struct {
 	// enableBlobMockMount is only for testing, DO NOT set as true in non-testing scenario
 	enableBlobMockMount                    bool
 	enableBlobfuseProxy                    bool
+	enableEdgeCacheFinalizer               bool
 	allowEmptyCloudConfig                  bool
 	enableGetVolumeStats                   bool
 	allowInlineVolumeKeyAccessWithIdentity bool
@@ -198,6 +202,7 @@ func NewDriver(options *DriverOptions) *Driver {
 		blobfuseProxyEndpoint:                  options.BlobfuseProxyEndpoint,
 		edgeCacheManager:                       edgecache.NewManager(options.EdgeCacheConnTimeout, options.EdgeCacheConfigEndpoint, options.EdgeCacheMountEndpoint),
 		enableBlobfuseProxy:                    options.EnableBlobfuseProxy,
+		enableEdgeCacheFinalizer:               options.EnableEdgeCacheFinalizer,
 		allowInlineVolumeKeyAccessWithIdentity: options.AllowInlineVolumeKeyAccessWithIdentity,
 		blobfuseProxyConnTimout:                options.BlobfuseProxyConnTimout,
 		enableBlobMockMount:                    options.EnableBlobMockMount,
@@ -236,6 +241,18 @@ func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
 	d.mounter = &mount.SafeFormatAndMount{
 		Interface: mount.New(""),
 		Exec:      utilexec.New(),
+	}
+
+	// When NodeID is empty, the plugin runs as controller
+	// We do not need to run the finalizer on every node, so run with controllers
+	if d.NodeID == "" && d.enableEdgeCacheFinalizer {
+		// The controller pod can run a custom controller to watch finalizers
+		klog.V(3).Info("Starting edgecache finalizer")
+		factory := informers.NewSharedInformerFactory(d.cloud.KubeClient, 1*time.Minute)
+		c := finalizer.NewEdgeCacheFinalizerController(d.edgeCacheManager, factory.Core().V1().PersistentVolumeClaims(), d.cloud.KubeClient)
+		ctx := context.Background()
+		factory.Start(ctx.Done())
+		go c.Run(ctx, 5)
 	}
 
 	// Initialize default library driver
@@ -687,7 +704,7 @@ func setAzureCredentials(kubeClient kubernetes.Interface, accountName, accountKe
 		Type: "Opaque",
 	}
 	_, err := kubeClient.CoreV1().Secrets(secretNamespace).Create(context.TODO(), secret, metav1.CreateOptions{})
-	if errors.IsAlreadyExists(err) {
+	if k8serrors.IsAlreadyExists(err) {
 		err = nil
 	}
 	if err != nil {

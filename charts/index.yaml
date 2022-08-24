@@ -203,10 +203,10 @@ entries:
     appVersion: latest
     created: "2022-07-05T03:14:36.424740138Z"
     description: Azure Blob Storage CSI driver
-    digest: 5fa596f974400dc779591683a58c321e9500dd52fd5396242318d1e3e8e2efde
+    digest: 45a485bddf4ba0d776c4c872ce89fb880a1fe926fb040528d2aa3e5a28e4767f
     name: blob-csi-driver
     urls:
-    - https://raw.githubusercontent.com/kubernetes-sigs/blob-csi-driver/master/charts/latest/blob-csi-driver-v0.0.0.tgz
+    - https://raw.githubusercontent.com/avoltz/blob-csi-driver/anvoltz/finalizer/charts/latest/blob-csi-driver-v0.0.0.tgz
     version: v0.0.0
   blobfuse-csi-driver:
   - apiVersion: v1

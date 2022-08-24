@@ -148,8 +148,8 @@ spec:
             - "--v={{ .Values.node.logLevel }}"
             - "--endpoint=$(CSI_ENDPOINT)"
             - "--blobfuse-proxy-endpoint=$(BLOBFUSE_PROXY_ENDPOINT)"
-            - "--edge-cache-config-endpoint=$(EDGE_CACHE_CONFIG_ENDPOINT)"
-            - "--edge-cache-mount-endpoint=$(EDGE_CACHE_MOUNT_ENDPOINT)"
+            - "--edgecache-config-endpoint=$(EDGECACHE_CONFIG_ENDPOINT)"
+            - "--edgecache-mount-endpoint=$(EDGECACHE_MOUNT_ENDPOINT)"
             - "--enable-blobfuse-proxy={{ .Values.node.enableBlobfuseProxy }}"
             - "--nodeid=$(KUBE_NODE_NAME)"
             - "--metrics-address=0.0.0.0:{{ .Values.node.metricsPort }}"
@@ -184,9 +184,9 @@ spec:
                   optional: true
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
-            - name: EDGE_CACHE_CONFIG_ENDPOINT
+            - name: EDGECACHE_CONFIG_ENDPOINT
               value: "{{ .Values.edgecache.configEndpoint }}"
-            - name: EDGE_CACHE_MOUNT_ENDPOINT
+            - name: EDGECACHE_MOUNT_ENDPOINT
               value: unix:///csi/csi_mounts.sock
             - name: BLOBFUSE_PROXY_ENDPOINT
               value: unix:///csi/blobfuse-proxy.sock

@@ -21,6 +21,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -154,4 +158,55 @@ func ConvertTagsToMap(tags string) (map[string]string, error) {
 		m[key] = value
 	}
 	return m, nil
+}
+
+func GetKubeClient(kubeconfig string) (*kubernetes.Clientset, error) {
+	var (
+		config *rest.Config
+		err    error
+	)
+	if kubeconfig != "" {
+		if config, err = clientcmd.BuildConfigFromFlags("", kubeconfig); err != nil {
+			return nil, err
+		}
+	} else {
+		if config, err = rest.InClusterConfig(); err != nil {
+			return nil, err
+		}
+	}
+
+	return kubernetes.NewForConfig(config)
+}
+
+// Function copied from kubernetes/pkg/util/slice/slice.go
+func ContainsString(slice []string, s string, modifier func(s string) string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+		if modifier != nil && modifier(item) == s {
+			return true
+		}
+	}
+	return false
+}
+
+// Function copied from kubernetes/pkg/util/slice/slice.go
+func RemoveString(slice []string, s string, modifier func(s string) string) []string {
+	newSlice := make([]string, 0)
+	for _, item := range slice {
+		if item == s {
+			continue
+		}
+		if modifier != nil && modifier(item) == s {
+			continue
+		}
+		newSlice = append(newSlice, item)
+	}
+	if len(newSlice) == 0 {
+		// Sanitize for unit tests so we don't need to distinguish empty array
+		// and nil.
+		newSlice = nil
+	}
+	return newSlice
 }
