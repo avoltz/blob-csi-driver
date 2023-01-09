@@ -30,16 +30,11 @@ import (
 
 	"github.com/Azure/go-autorest/autorest"
 
-<<<<<<< HEAD
-||||||| fb22031f
-	"k8s.io/client-go/kubernetes"
-=======
 	clientset "k8s.io/client-go/kubernetes"
->>>>>>> v1.19.0
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
-	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	"sigs.k8s.io/cloud-provider-azure/pkg/auth"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
 )

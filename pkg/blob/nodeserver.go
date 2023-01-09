@@ -293,7 +293,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		}
 	}
 
-	if protocol == ecprotocol {
+	if protocol == EcProtocol {
 		targetPath = edgecache.GetStagingPath(targetPath)
 		klog.V(2).Infof("NodeStageVolume: edgecache enabled for volume, will mount to: %q", targetPath)
 	}

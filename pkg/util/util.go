@@ -22,10 +22,6 @@ import (
 	"strings"
 	"sync"
 
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-
 	"github.com/go-ini/ini"
 	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
