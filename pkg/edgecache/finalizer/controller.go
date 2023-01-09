@@ -34,7 +34,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
-	"k8s.io/component-base/metrics/prometheus/ratelimiter"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
@@ -75,14 +74,6 @@ func NewEdgeCacheFinalizerController(manager edgecache.ManagerInterface, pvcInfo
 	if manager == nil {
 		klog.Error("edgecache finalizer requires edgecache manager")
 		return nil
-	}
-	limiter := client.CoreV1().RESTClient().GetRateLimiter()
-	if limiter != nil {
-		err := ratelimiter.RegisterMetricAndTrackRateLimiterUsage("edgecache_finalizer_controller", limiter)
-		if err != nil {
-			klog.Errorf("unable to register ratelimiter")
-			return nil
-		}
 	}
 
 	c.ecManager = manager
