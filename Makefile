@@ -17,7 +17,7 @@ GIT_COMMIT ?= $(shell git rev-parse HEAD)
 REGISTRY ?= andyzhangx
 REGISTRY_NAME ?= $(shell echo $(REGISTRY) | sed "s/.azurecr.io//g")
 IMAGE_NAME ?= blob-csi
-IMAGE_VERSION ?= v1.17.0
+IMAGE_VERSION ?= v1.19.0
 CLOUD ?= AzurePublicCloud
 # Use a custom version for E2E tests if we are in Prow
 ifdef CI
@@ -34,7 +34,7 @@ ifdef ENABLE_BLOBFUSE_PROXY
 override E2E_HELM_OPTIONS := $(E2E_HELM_OPTIONS) --set controller.logLevel=6 --set node.logLevel=6 --set node.enableBlobfuseProxy=true
 endif
 E2E_HELM_OPTIONS += ${EXTRA_HELM_OPTIONS}
-GINKGO_FLAGS = -ginkgo.v
+GINKGO_FLAGS = -ginkgo.v -ginkgo.timeout=2h
 GO111MODULE = on
 GOPATH ?= $(shell go env GOPATH)
 GOBIN ?= $(GOPATH)/bin

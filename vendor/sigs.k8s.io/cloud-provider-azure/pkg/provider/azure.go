@@ -17,6 +17,7 @@ limitations under the License.
 package provider
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -38,6 +39,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/flowcontrol"
@@ -143,8 +145,8 @@ type Config struct {
 	// The name of the scale set that should be used as the load balancer backend.
 	// If this is set, the Azure cloudprovider will only add nodes from that scale set to the load
 	// balancer backend pool. If this is not set, and multiple agent pools (scale sets) are used, then
-	// the cloudprovider will try to add all nodes to a single backend pool which is forbidden.
-	// In other words, if you use multiple agent pools (scale sets), you MUST set this field.
+	// the cloudprovider will try to add all nodes to a single backend pool which is forbidden in the basic sku.
+	// In other words, if you use multiple agent pools (scale sets), and loadBalancerSku is set to basic, you MUST set this field.
 	PrimaryScaleSetName string `json:"primaryScaleSetName,omitempty" yaml:"primaryScaleSetName,omitempty"`
 	// Tags determines what tags shall be applied to the shared resources managed by controller manager, which
 	// includes load balancer, security group and route table. The supported format is `a=b,c=d,...`. After updated
@@ -177,6 +179,8 @@ type Config struct {
 
 	// DisableAvailabilitySetNodes disables VMAS nodes support when "VMType" is set to "vmss".
 	DisableAvailabilitySetNodes bool `json:"disableAvailabilitySetNodes,omitempty" yaml:"disableAvailabilitySetNodes,omitempty"`
+	// EnableVmssFlexNodes enables vmss flex nodes support when "VMType" is set to "vmss".
+	EnableVmssFlexNodes bool `json:"enableVmssFlexNodes,omitempty" yaml:"enableVmssFlexNodes,omitempty"`
 	// DisableAzureStackCloud disables AzureStackCloud support. It should be used
 	// when setting AzureAuthConfig.Cloud with "AZURESTACKCLOUD" to customize ARM endpoints
 	// while the cluster is not running on AzureStack.
@@ -214,6 +218,9 @@ type Config struct {
 	CloudProviderBackoffRetries int `json:"cloudProviderBackoffRetries,omitempty" yaml:"cloudProviderBackoffRetries,omitempty"`
 	// Backoff duration
 	CloudProviderBackoffDuration int `json:"cloudProviderBackoffDuration,omitempty" yaml:"cloudProviderBackoffDuration,omitempty"`
+	// NonVmssUniformNodesCacheTTLInSeconds sets the Cache TTL for NonVmssUniformNodesCacheTTLInSeconds
+	// if not set, will use default value
+	NonVmssUniformNodesCacheTTLInSeconds int `json:"nonVmssUniformNodesCacheTTLInSeconds,omitempty" yaml:"nonVmssUniformNodesCacheTTLInSeconds,omitempty"`
 	// AvailabilitySetNodesCacheTTLInSeconds sets the Cache TTL for availabilitySetNodesCache
 	// if not set, will use default value
 	AvailabilitySetNodesCacheTTLInSeconds int `json:"availabilitySetNodesCacheTTLInSeconds,omitempty" yaml:"availabilitySetNodesCacheTTLInSeconds,omitempty"`
@@ -359,29 +366,18 @@ type Cloud struct {
 	// use LB frontEndIpConfiguration ID as the key and search for PLS attached to the frontEnd
 	plsCache *azcache.TimedCache
 
+	// Add service lister to always get latest service
+	serviceLister corelisters.ServiceLister
+	// node-sync-loop routine and service-reconcile routine should not update LoadBalancer at the same time
+	serviceReconcileLock sync.Mutex
+
 	*ManagedDiskController
 	*controllerCommon
 }
 
-func init() {
-	// In go-autorest SDK https://github.com/Azure/go-autorest/blob/master/autorest/sender.go#L258-L287,
-	// if ARM returns http.StatusTooManyRequests, the sender doesn't increase the retry attempt count,
-	// hence the Azure clients will keep retrying forever until it get a status code other than 429.
-	// So we explicitly removes http.StatusTooManyRequests from autorest.StatusCodesForRetry.
-	// Refer https://github.com/Azure/go-autorest/issues/398.
-	// TODO(feiskyer): Use autorest.SendDecorator to customize the retry policy when new Azure SDK is available.
-	statusCodesForRetry := make([]int, 0)
-	for _, code := range autorest.StatusCodesForRetry {
-		if code != http.StatusTooManyRequests {
-			statusCodesForRetry = append(statusCodesForRetry, code)
-		}
-	}
-	autorest.StatusCodesForRetry = statusCodesForRetry
-}
-
 // NewCloud returns a Cloud with initialized clients
-func NewCloud(configReader io.Reader, callFromCCM bool) (cloudprovider.Interface, error) {
-	az, err := NewCloudWithoutFeatureGates(configReader, callFromCCM)
+func NewCloud(ctx context.Context, configReader io.Reader, callFromCCM bool) (cloudprovider.Interface, error) {
+	az, err := NewCloudWithoutFeatureGates(ctx, configReader, callFromCCM)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +386,7 @@ func NewCloud(configReader io.Reader, callFromCCM bool) (cloudprovider.Interface
 	return az, nil
 }
 
-func NewCloudFromConfigFile(configFilePath string, calFromCCM bool) (cloudprovider.Interface, error) {
+func NewCloudFromConfigFile(ctx context.Context, configFilePath string, calFromCCM bool) (cloudprovider.Interface, error) {
 	var (
 		cloud cloudprovider.Interface
 		err   error
@@ -405,15 +401,15 @@ func NewCloudFromConfigFile(configFilePath string, calFromCCM bool) (cloudprovid
 		}
 
 		defer config.Close()
-		cloud, err = NewCloud(config, calFromCCM)
+		cloud, err = NewCloud(ctx, config, calFromCCM)
 	} else {
 		// Pass explicit nil so plugins can actually check for nil. See
 		// "Why is my nil error value not equal to nil?" in golang.org/doc/faq.
-		cloud, err = NewCloud(nil, false)
+		cloud, err = NewCloud(ctx, nil, false)
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("could not init cloud provider azure: %v", err)
+		return nil, fmt.Errorf("could not init cloud provider azure: %w", err)
 	}
 	if cloud == nil {
 		return nil, fmt.Errorf("nil cloud")
@@ -440,7 +436,7 @@ func (az *Cloud) configSecretMetadata(secretName, secretNamespace, cloudConfigKe
 	}
 }
 
-func NewCloudFromSecret(clientBuilder cloudprovider.ControllerClientBuilder, secretName, secretNamespace, cloudConfigKey string) (cloudprovider.Interface, error) {
+func NewCloudFromSecret(ctx context.Context, clientBuilder cloudprovider.ControllerClientBuilder, secretName, secretNamespace, cloudConfigKey string) (cloudprovider.Interface, error) {
 	az := &Cloud{
 		nodeNames:                sets.NewString(),
 		nodeZones:                map[string]sets.String{},
@@ -455,9 +451,9 @@ func NewCloudFromSecret(clientBuilder cloudprovider.ControllerClientBuilder, sec
 
 	az.Initialize(clientBuilder, wait.NeverStop)
 
-	err := az.InitializeCloudFromSecret()
+	err := az.InitializeCloudFromSecret(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("NewCloudFromSecret: failed to initialize cloud from secret %s/%s: %v", az.SecretNamespace, az.SecretName, err)
+		return nil, fmt.Errorf("NewCloudFromSecret: failed to initialize cloud from secret %s/%s: %w", az.SecretNamespace, az.SecretName, err)
 	}
 
 	az.ipv6DualStackEnabled = true
@@ -467,7 +463,7 @@ func NewCloudFromSecret(clientBuilder cloudprovider.ControllerClientBuilder, sec
 
 // NewCloudWithoutFeatureGates returns a Cloud without trying to wire the feature gates.  This is used by the unit tests
 // that don't load the actual features being used in the cluster.
-func NewCloudWithoutFeatureGates(configReader io.Reader, callFromCCM bool) (*Cloud, error) {
+func NewCloudWithoutFeatureGates(ctx context.Context, configReader io.Reader, callFromCCM bool) (*Cloud, error) {
 	config, err := ParseConfig(configReader)
 	if err != nil {
 		return nil, err
@@ -483,7 +479,7 @@ func NewCloudWithoutFeatureGates(configReader io.Reader, callFromCCM bool) (*Clo
 		nodePrivateIPs:           map[string]sets.String{},
 	}
 
-	err = az.InitializeCloudFromConfig(config, false, callFromCCM)
+	err = az.InitializeCloudFromConfig(ctx, config, false, callFromCCM)
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +488,7 @@ func NewCloudWithoutFeatureGates(configReader io.Reader, callFromCCM bool) (*Clo
 }
 
 // InitializeCloudFromConfig initializes the Cloud from config.
-func (az *Cloud) InitializeCloudFromConfig(config *Config, fromSecret, callFromCCM bool) error {
+func (az *Cloud) InitializeCloudFromConfig(ctx context.Context, config *Config, fromSecret, callFromCCM bool) error {
 	if config == nil {
 		// should not reach here
 		return fmt.Errorf("InitializeCloudFromConfig: cannot initialize from nil config")
@@ -611,7 +607,12 @@ func (az *Cloud) InitializeCloudFromConfig(config *Config, fromSecret, callFromC
 	}
 
 	if strings.EqualFold(consts.VMTypeVMSS, az.Config.VMType) {
-		az.VMSet, err = newScaleSet(az)
+		az.VMSet, err = newScaleSet(ctx, az)
+		if err != nil {
+			return err
+		}
+	} else if strings.EqualFold(consts.VMTypeVmssFlex, az.Config.VMType) {
+		az.VMSet, err = newFlexScaleSet(ctx, az)
 		if err != nil {
 			return err
 		}
@@ -729,7 +730,7 @@ func (az *Cloud) configureMultiTenantClients(servicePrincipalToken *adal.Service
 	var err error
 	var multiTenantServicePrincipalToken *adal.MultiTenantServicePrincipalToken
 	var networkResourceServicePrincipalToken *adal.ServicePrincipalToken
-	if az.Config.UsesNetworkResourceInDifferentTenantOrSubscription() {
+	if az.Config.UsesNetworkResourceInDifferentTenant() {
 		multiTenantServicePrincipalToken, err = auth.GetMultiTenantServicePrincipalToken(&az.Config.AzureAuthConfig, &az.Environment)
 		if err != nil {
 			return err
@@ -839,7 +840,9 @@ func (az *Cloud) configAzureClients(
 		loadBalancerClientConfig.Authorizer = networkResourceServicePrincipalTokenAuthorizer
 		securityGroupClientConfig.Authorizer = networkResourceServicePrincipalTokenAuthorizer
 		publicIPClientConfig.Authorizer = networkResourceServicePrincipalTokenAuthorizer
+	}
 
+	if az.UsesNetworkResourceInDifferentSubscription() {
 		routeClientConfig.SubscriptionID = az.Config.NetworkResourceSubscriptionID
 		subnetClientConfig.SubscriptionID = az.Config.NetworkResourceSubscriptionID
 		routeTableClientConfig.SubscriptionID = az.Config.NetworkResourceSubscriptionID
@@ -1003,20 +1006,9 @@ func initDiskControllers(az *Cloud) error {
 	klog.V(2).Infof("attach/detach disk operation rate limit QPS: %f, Bucket: %d", qps, bucket)
 
 	common := &controllerCommon{
-		location:              az.Location,
-		storageEndpointSuffix: az.Environment.StorageEndpointSuffix,
-		resourceGroup:         az.ResourceGroup,
-		subscriptionID:        az.SubscriptionID,
-		cloud:                 az,
-		lockMap:               newLockMap(),
-		diskOpRateLimiter:     flowcontrol.NewTokenBucketRateLimiter(qps, bucket),
-	}
-
-	if az.HasExtendedLocation() {
-		common.extendedLocation = &ExtendedLocation{
-			Name: az.ExtendedLocationName,
-			Type: az.ExtendedLocationType,
-		}
+		cloud:             az,
+		lockMap:           newLockMap(),
+		diskOpRateLimiter: flowcontrol.NewTokenBucketRateLimiter(qps, bucket),
 	}
 
 	az.ManagedDiskController = &ManagedDiskController{common: common}
@@ -1029,7 +1021,7 @@ func initDiskControllers(az *Cloud) error {
 func (az *Cloud) SetInformers(informerFactory informers.SharedInformerFactory) {
 	klog.Infof("Setting up informers for Azure cloud provider")
 	nodeInformer := informerFactory.Core().V1().Nodes().Informer()
-	nodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, _ = nodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			node := obj.(*v1.Node)
 			az.updateNodeCaches(nil, node)
@@ -1056,9 +1048,14 @@ func (az *Cloud) SetInformers(informerFactory informers.SharedInformerFactory) {
 				}
 			}
 			az.updateNodeCaches(node, nil)
+
+			klog.V(4).Infof("Removing node %s from VMSet cache.", node.Name)
+			_ = az.VMSet.DeleteCacheForNode(node.Name)
 		},
 	})
 	az.nodeInformerSynced = nodeInformer.HasSynced
+
+	az.serviceLister = informerFactory.Core().V1().Services().Lister()
 }
 
 // updateNodeCaches updates local cache for node's zones and external resource groups.

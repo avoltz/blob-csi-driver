@@ -27,16 +27,21 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2021-09-01/storage"
 	azstorage "github.com/Azure/azure-sdk-for-go/storage"
-	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/pointer"
 
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	"sigs.k8s.io/cloud-provider-azure/pkg/metrics"
+	"sigs.k8s.io/cloud-provider-azure/pkg/provider"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
+)
+
+const (
+	privateEndpoint = "privateendpoint"
 )
 
 // CreateVolume provisions a volume
@@ -69,10 +74,10 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	}
 	var storageAccountType, subsID, resourceGroup, location, account, containerName, containerNamePrefix, protocol, customTags, secretName, secretNamespace, pvcNamespace string
 	var isHnsEnabled, requireInfraEncryption *bool
-	var vnetResourceGroup, vnetName, subnetName string
+	var vnetResourceGroup, vnetName, subnetName, accessTier, networkEndpointType, storageEndpointSuffix string
 	var matchTags, useDataPlaneAPI bool
 	// set allowBlobPublicAccess as false by default
-	allowBlobPublicAccess := to.BoolPtr(false)
+	allowBlobPublicAccess := pointer.Bool(false)
 
 	containerNameReplaceMap := map[string]string{}
 
@@ -111,7 +116,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			secretNamespace = v
 		case isHnsEnabledField:
 			if strings.EqualFold(v, trueValue) {
-				isHnsEnabled = to.BoolPtr(true)
+				isHnsEnabled = pointer.Bool(true)
 			}
 		case storeAccountKeyField:
 			if strings.EqualFold(v, falseValue) {
@@ -119,11 +124,11 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			}
 		case allowBlobPublicAccessField:
 			if strings.EqualFold(v, trueValue) {
-				allowBlobPublicAccess = to.BoolPtr(true)
+				allowBlobPublicAccess = pointer.Bool(true)
 			}
 		case requireInfraEncryptionField:
 			if strings.EqualFold(v, trueValue) {
-				requireInfraEncryption = to.BoolPtr(true)
+				requireInfraEncryption = pointer.Bool(true)
 			}
 		case pvcNamespaceKey:
 			pvcNamespace = v
@@ -135,13 +140,17 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		case serverNameField:
 			// no op, only used in NodeStageVolume
 		case storageEndpointSuffixField:
-			// no op, only used in NodeStageVolume
+			storageEndpointSuffix = v
 		case vnetResourceGroupField:
 			vnetResourceGroup = v
 		case vnetNameField:
 			vnetName = v
 		case subnetNameField:
 			subnetName = v
+		case accessTierField:
+			accessTier = v
+		case networkEndpointTypeField:
+			networkEndpointType = v
 		case mountPermissionsField:
 			// only do validations here, used in NodeStageVolume, NodePublishVolume
 			if v != "" {
@@ -161,7 +170,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	}
 
 	if subsID != "" && subsID != d.cloud.SubscriptionID {
-		if protocol == nfs {
+		if protocol == NFS {
 			return nil, status.Errorf(codes.InvalidArgument, fmt.Sprintf("NFS protocol is not supported in cross subscription(%s)", subsID))
 		}
 		if !storeAccountKey {
@@ -182,10 +191,13 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	}
 
 	if protocol == "" {
-		protocol = fuse
+		protocol = Fuse
 	}
 	if !isSupportedProtocol(protocol) {
 		return nil, status.Errorf(codes.InvalidArgument, "protocol(%s) is not supported, supported protocol list: %v", protocol, supportedProtocolList)
+	}
+	if !isSupportedAccessTier(accessTier) {
+		return nil, status.Errorf(codes.InvalidArgument, "accessTier(%s) is not supported, supported AccessTier list: %v", accessTier, storage.PossibleAccessTierValues())
 	}
 
 	if containerName != "" && containerNamePrefix != "" {
@@ -200,24 +212,29 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	}
 
 	enableHTTPSTrafficOnly := true
+	createPrivateEndpoint := false
+	if strings.EqualFold(networkEndpointType, privateEndpoint) {
+		createPrivateEndpoint = true
+	}
 	accountKind := string(storage.KindStorageV2)
 	var (
 		vnetResourceIDs []string
 		enableNfsV3     *bool
 	)
-	if protocol == nfs {
-		enableHTTPSTrafficOnly = false
-		isHnsEnabled = to.BoolPtr(true)
-		enableNfsV3 = to.BoolPtr(true)
-		// set VirtualNetworkResourceIDs for storage account firewall setting
-		vnetResourceID := d.getSubnetResourceID()
-		klog.V(2).Infof("set vnetResourceID(%s) for NFS protocol", vnetResourceID)
-		vnetResourceIDs = []string{vnetResourceID}
-		if err := d.updateSubnetServiceEndpoints(ctx, vnetResourceGroup, vnetName, subnetName); err != nil {
-			return nil, status.Errorf(codes.Internal, "update service endpoints failed with error: %v", err)
-		}
+	if protocol == NFS {
+		isHnsEnabled = pointer.Bool(true)
+		enableNfsV3 = pointer.Bool(true)
 		// NFS protocol does not need account key
 		storeAccountKey = false
+		if !createPrivateEndpoint {
+			// set VirtualNetworkResourceIDs for storage account firewall setting
+			vnetResourceID := d.getSubnetResourceID(vnetResourceGroup, vnetName, subnetName)
+			klog.V(2).Infof("set vnetResourceID(%s) for NFS protocol", vnetResourceID)
+			vnetResourceIDs = []string{vnetResourceID}
+			if err := d.updateSubnetServiceEndpoints(ctx, vnetResourceGroup, vnetName, subnetName); err != nil {
+				return nil, status.Errorf(codes.Internal, "update service endpoints failed with error: %v", err)
+			}
+		}
 	}
 
 	if strings.HasPrefix(strings.ToLower(storageAccountType), "premium") {
@@ -233,6 +250,14 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	tags, err := util.ConvertTagsToMap(customTags)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, err.Error())
+	}
+
+	if strings.TrimSpace(storageEndpointSuffix) == "" {
+		if d.cloud.Environment.StorageEndpointSuffix != "" {
+			storageEndpointSuffix = d.cloud.Environment.StorageEndpointSuffix
+		} else {
+			storageEndpointSuffix = defaultStorageEndPointSuffix
+		}
 	}
 
 	accountOptions := &azure.AccountOptions{
@@ -253,6 +278,10 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		VNetResourceGroup:               vnetResourceGroup,
 		VNetName:                        vnetName,
 		SubnetName:                      subnetName,
+		AccessTier:                      accessTier,
+		CreatePrivateEndpoint:           createPrivateEndpoint,
+		StorageType:                     provider.StorageTypeBlob,
+		StorageEndpointSuffix:           storageEndpointSuffix,
 	}
 
 	var accountKey string
@@ -262,7 +291,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		if v, ok := d.volMap.Load(volName); ok {
 			accountName = v.(string)
 		} else {
-			lockKey := fmt.Sprintf("%s%s%s%s%s", storageAccountType, accountKind, resourceGroup, location, protocol)
+			lockKey := fmt.Sprintf("%s%s%s%s%s%v", storageAccountType, accountKind, resourceGroup, location, protocol, createPrivateEndpoint)
 			// search in cache first
 			cache, err := d.accountSearchCache.Get(lockKey, azcache.CacheReadTypeDefault)
 			if err != nil {
@@ -289,6 +318,16 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 				d.volMap.Store(volName, accountName)
 			}
 		}
+	}
+
+	if createPrivateEndpoint && protocol == NFS {
+		// As for blobfuse/blobfuse2, serverName, i.e.,AZURE_STORAGE_BLOB_ENDPOINT env variable can't include
+		// "privatelink", issue: https://github.com/Azure/azure-storage-fuse/issues/1014
+		//
+		// And use public endpoint will be befine to blobfuse/blobfuse2, because it will be resolved to private endpoint
+		// by private dns zone, which includes CNAME record, documented here:
+		// https://learn.microsoft.com/en-us/azure/storage/common/storage-private-endpoints?toc=%2Fazure%2Fstorage%2Fblobs%2Ftoc.json&bc=%2Fazure%2Fstorage%2Fblobs%2Fbreadcrumb%2Ftoc.json#dns-changes-for-private-endpoints
+		setKeyValueInMap(parameters, serverNameField, fmt.Sprintf("%s.privatelink.blob.%s", accountName, storageEndpointSuffix))
 	}
 
 	accountOptions.Name = accountName

@@ -28,15 +28,17 @@ import (
 	"sigs.k8s.io/blob-csi-driver/test/e2e/driver"
 	"sigs.k8s.io/blob-csi-driver/test/e2e/testsuites"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	admissionapi "k8s.io/pod-security-admission/api"
 )
 
 var _ = ginkgo.Describe("[blob-csi-e2e] Dynamic Provisioning", func() {
 	f := framework.NewDefaultFramework("blob")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
 	var (
 		cs         clientset.Interface
@@ -87,6 +89,7 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Dynamic Provisioning", func() {
 				// make sure this is the first test case due to storeAccountKey is set as false
 				"storeAccountKey":        "false",
 				"requireInfraEncryption": "true",
+				"accessTier":             "Hot",
 			},
 		}
 		test.Run(cs, ns)
@@ -119,6 +122,7 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Dynamic Provisioning", func() {
 				"skuName":             "Standard_LRS",
 				"secretNamespace":     "default",
 				"containerNamePrefix": "nameprefix",
+				"accessTier":          "Cool",
 			},
 		}
 		test.Run(cs, ns)
@@ -187,6 +191,7 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Dynamic Provisioning", func() {
 				"skuName":               "Premium_LRS",
 				"isHnsEnabled":          "true",
 				"allowBlobPublicAccess": "false",
+				"accessTier":            "Premium",
 				"useDataPlaneAPI":       "true",
 				"containerName":         "container-${pvc.metadata.name}",
 			},
@@ -564,6 +569,141 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Dynamic Provisioning", func() {
 				"skuName":          "Premium_LRS",
 				"protocol":         "nfs",
 				"mountPermissions": "0",
+			},
+		}
+		test.Run(cs, ns)
+	})
+
+	ginkgo.It("should create a blobfuse2 volume on demand with mount options [fuse2]", func() {
+		if isAzureStackCloud {
+			ginkgo.Skip("test case is not available for Azure Stack")
+		}
+		pods := []testsuites.PodDetails{
+			{
+				Cmd: "echo 'hello world' > /mnt/test-1/data && grep 'hello world' /mnt/test-1/data",
+				Volumes: []testsuites.VolumeDetails{
+					{
+						ClaimSize: "10Gi",
+						MountOptions: []string{
+							"-o allow_other",
+							"--virtual-directory=true", // blobfuse2 mount options
+						},
+						VolumeMount: testsuites.VolumeMountDetails{
+							NameGenerate:      "test-volume-",
+							MountPathGenerate: "/mnt/test-",
+						},
+					},
+				},
+			},
+		}
+		test := testsuites.DynamicallyProvisionedCmdVolumeTest{
+			CSIDriver: testDriver,
+			Pods:      pods,
+			StorageClassParameters: map[string]string{
+				"skuName":  "Standard_LRS",
+				"protocol": "fuse2",
+			},
+		}
+		test.Run(cs, ns)
+	})
+
+	ginkgo.It("should create a private endpoint volume on demand", func() {
+		if isAzureStackCloud {
+			ginkgo.Skip("test case is not available for Azure Stack")
+		}
+		pods := []testsuites.PodDetails{
+			{
+				Cmd: "echo 'hello world' > /mnt/test-1/data && grep 'hello world' /mnt/test-1/data",
+				Volumes: []testsuites.VolumeDetails{
+					{
+						ClaimSize: "10Gi",
+						MountOptions: []string{
+							"-o allow_other",
+							"--file-cache-timeout-in-seconds=120",
+							"--cancel-list-on-mount-seconds=0",
+						},
+						VolumeMount: testsuites.VolumeMountDetails{
+							NameGenerate:      "test-volume-",
+							MountPathGenerate: "/mnt/test-",
+						},
+					},
+				},
+			},
+		}
+		test := testsuites.DynamicallyProvisionedCmdVolumeTest{
+			CSIDriver: testDriver,
+			Pods:      pods,
+			StorageClassParameters: map[string]string{
+				"skuName":             "Standard_LRS",
+				"networkEndpointType": "privateEndpoint",
+			},
+		}
+		test.Run(cs, ns)
+	})
+
+	ginkgo.It("should create a private endpoint volume on demand with protocol [fuse2]", func() {
+		if isAzureStackCloud {
+			ginkgo.Skip("test case is not available for Azure Stack")
+		}
+		pods := []testsuites.PodDetails{
+			{
+				Cmd: "echo 'hello world' > /mnt/test-1/data && grep 'hello world' /mnt/test-1/data",
+				Volumes: []testsuites.VolumeDetails{
+					{
+						ClaimSize: "10Gi",
+						MountOptions: []string{
+							"-o allow_other",
+							"--virtual-directory=true", // blobfuse2 mount options
+						},
+						VolumeMount: testsuites.VolumeMountDetails{
+							NameGenerate:      "test-volume-",
+							MountPathGenerate: "/mnt/test-",
+						},
+					},
+				},
+			},
+		}
+		test := testsuites.DynamicallyProvisionedCmdVolumeTest{
+			CSIDriver: testDriver,
+			Pods:      pods,
+			StorageClassParameters: map[string]string{
+				"skuName":             "Standard_LRS",
+				"protocol":            "fuse2",
+				"networkEndpointType": "privateEndpoint",
+			},
+		}
+		test.Run(cs, ns)
+	})
+
+	ginkgo.It("should create a private endpoint volume on demand with protocol [nfs]", func() {
+		if isAzureStackCloud {
+			ginkgo.Skip("test case is not available for Azure Stack")
+		}
+		pods := []testsuites.PodDetails{
+			{
+				Cmd: "echo 'hello world' > /mnt/test-1/data && grep 'hello world' /mnt/test-1/data",
+				Volumes: []testsuites.VolumeDetails{
+					{
+						ClaimSize: "10Gi",
+						MountOptions: []string{
+							"nconnect=8",
+						},
+						VolumeMount: testsuites.VolumeMountDetails{
+							NameGenerate:      "test-volume-",
+							MountPathGenerate: "/mnt/test-",
+						},
+					},
+				},
+			},
+		}
+		test := testsuites.DynamicallyProvisionedCmdVolumeTest{
+			CSIDriver: testDriver,
+			Pods:      pods,
+			StorageClassParameters: map[string]string{
+				"skuName":             "Premium_LRS",
+				"protocol":            "nfs",
+				"mountPermissions":    "0755",
+				"networkEndpointType": "privateEndpoint",
 			},
 		}
 		test.Run(cs, ns)

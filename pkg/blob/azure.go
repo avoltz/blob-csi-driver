@@ -30,6 +30,12 @@ import (
 
 	"github.com/Azure/go-autorest/autorest"
 
+<<<<<<< HEAD
+||||||| fb22031f
+	"k8s.io/client-go/kubernetes"
+=======
+	clientset "k8s.io/client-go/kubernetes"
+>>>>>>> v1.19.0
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
@@ -50,7 +56,13 @@ func IsAzureStackCloud(cloud *azure.Cloud) bool {
 }
 
 // getCloudProvider get Azure Cloud Provider
-func getCloudProvider(kubeconfig, nodeID, secretName, secretNamespace, userAgent string, allowEmptyCloudConfig bool) (*azure.Cloud, error) {
+func getCloudProvider(kubeconfig, nodeID, secretName, secretNamespace, userAgent string, allowEmptyCloudConfig bool, kubeAPIQPS float64, kubeAPIBurst int) (*azure.Cloud, error) {
+	var (
+		config     *azure.Config
+		kubeClient *clientset.Clientset
+		fromSecret bool
+	)
+
 	az := &azure.Cloud{
 		InitSecretConfig: azure.InitSecretConfig{
 			SecretName:      secretName,
@@ -60,18 +72,21 @@ func getCloudProvider(kubeconfig, nodeID, secretName, secretNamespace, userAgent
 	}
 	az.Environment.StorageEndpointSuffix = storage.DefaultBaseURL
 
-	kubeClient, err := util.GetKubeClient(kubeconfig)
-	if err != nil {
+	kubeCfg, err := getKubeConfig(kubeconfig)
+	if err == nil && kubeCfg != nil {
+		// set QPS and QPS Burst as higher values
+		klog.V(2).Infof("set QPS(%f) and QPS Burst(%d) for driver kubeClient", float32(kubeAPIQPS), kubeAPIBurst)
+		kubeCfg.QPS = float32(kubeAPIQPS)
+		kubeCfg.Burst = kubeAPIBurst
+		if kubeClient, err = clientset.NewForConfig(kubeCfg); err != nil {
+			klog.Warningf("NewForConfig failed with error: %v", err)
+		}
+	} else {
 		klog.Warningf("get kubeconfig(%s) failed with error: %v", kubeconfig, err)
 		if !os.IsNotExist(err) && !errors.Is(err, rest.ErrNotInCluster) {
 			return az, fmt.Errorf("failed to get KubeClient: %w", err)
 		}
 	}
-
-	var (
-		config     *azure.Config
-		fromSecret bool
-	)
 
 	if kubeClient != nil {
 		klog.V(2).Infof("reading cloud config from secret %s/%s", az.SecretNamespace, az.SecretName)
@@ -116,7 +131,7 @@ func getCloudProvider(kubeconfig, nodeID, secretName, secretNamespace, userAgent
 	} else {
 		config.UserAgent = userAgent
 		config.CloudProviderBackoff = true
-		if err = az.InitializeCloudFromConfig(config, fromSecret, false); err != nil {
+		if err = az.InitializeCloudFromConfig(context.TODO(), config, fromSecret, false); err != nil {
 			klog.Warningf("InitializeCloudFromConfig failed with error: %v", err)
 		}
 	}
@@ -248,4 +263,17 @@ func (d *Driver) updateSubnetServiceEndpoints(ctx context.Context, vnetResourceG
 	}
 
 	return nil
+}
+
+func getKubeConfig(kubeconfig string) (config *rest.Config, err error) {
+	if kubeconfig != "" {
+		if config, err = clientcmd.BuildConfigFromFlags("", kubeconfig); err != nil {
+			return nil, err
+		}
+	} else {
+		if config, err = rest.InClusterConfig(); err != nil {
+			return nil, err
+		}
+	}
+	return config, err
 }

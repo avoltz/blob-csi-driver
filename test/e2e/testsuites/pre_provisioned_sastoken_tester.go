@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	v1 "k8s.io/api/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -71,6 +71,7 @@ func (t *PreProvisionedSASTokenTest) Run(client clientset.Interface, namespace *
 			pod.Volumes[n].Attrib["storageAccountName"] = accountName
 			pod.Volumes[n].Attrib["keyVaultURL"] = *vault.Properties.VaultURI
 			pod.Volumes[n].Attrib["keyVaultSecretName"] = *accountSASSecret.Name
+			pod.Volumes[n].Attrib["azurestorageauthtype"] = "SAS"
 
 			tpod, cleanup := pod.SetupWithPreProvisionedVolumes(client, namespace, t.CSIDriver)
 			// defer must be called here for resources not get removed before using them
