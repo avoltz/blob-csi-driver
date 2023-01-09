@@ -80,9 +80,13 @@ func NewEdgeCacheFinalizerController(manager edgecache.ManagerInterface, pvcInfo
 	c.pvcLister = pvcInformer.Lister()
 	c.pvcListerSynced = pvcInformer.Informer().HasSynced
 
-	pvcInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := pvcInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: c.pvcUpdated,
 	})
+	if err != nil {
+		klog.Error("edgecache unable to add eventhandler")
+		return nil
+	}
 
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartLogging(klog.Infof)
