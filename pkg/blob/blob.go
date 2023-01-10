@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2021-09-01/storage"
 	azstorage "github.com/Azure/azure-sdk-for-go/storage"
 	az "github.com/Azure/go-autorest/autorest/azure"
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -87,12 +88,15 @@ const (
 	trueValue                    = "true"
 	defaultSecretAccountName     = "azurestorageaccountname"
 	defaultSecretAccountKey      = "azurestorageaccountkey"
-	ecprotocol                   = "edgecache"
-	fuse                         = "fuse"
-	nfs                          = "nfs"
+	EcProtocol                   = "edgecache"
+	Fuse                         = "fuse"
+	Fuse2                        = "fuse2"
+	NFS                          = "nfs"
 	vnetResourceGroupField       = "vnetresourcegroup"
 	vnetNameField                = "vnetname"
 	subnetNameField              = "subnetname"
+	accessTierField              = "accesstier"
+	networkEndpointTypeField     = "networkendpointtype"
 	mountPermissionsField        = "mountpermissions"
 	useDataPlaneAPIField         = "usedataplaneapi"
 
@@ -123,10 +127,12 @@ const (
 	pvNameMetadata       = "${pv.metadata.name}"
 
 	VolumeID = "volumeid"
+
+	defaultStorageEndPointSuffix = "core.windows.net"
 )
 
 var (
-	supportedProtocolList = []string{ecprotocol, fuse, nfs}
+	supportedProtocolList = []string{EcProtocol, Fuse, Fuse2, NFS}
 	retriableErrors       = []string{accountNotProvisioned, tooManyRequests, statusCodeNotFound, containerBeingDeletedDataplaneAPIError, containerBeingDeletedManagementAPIError, clientThrottled}
 )
 
@@ -151,6 +157,8 @@ type DriverOptions struct {
 	EnableGetVolumeStats                   bool
 	AppendTimeStampInCacheDir              bool
 	MountPermissions                       uint64
+	KubeAPIQPS                             float64
+	KubeAPIBurst                           int
 }
 
 // Driver implements all interfaces of CSI drivers
@@ -174,6 +182,8 @@ type Driver struct {
 	blobfuseProxyConnTimout                int
 	mountPermissions                       uint64
 	edgeCacheManager                       *edgecache.Manager
+	kubeAPIQPS                             float64
+	kubeAPIBurst                           int
 	mounter                                *mount.SafeFormatAndMount
 	volLockMap                             *util.LockMap
 	// A map storing all volumes with ongoing operations so that additional operations
@@ -210,6 +220,8 @@ func NewDriver(options *DriverOptions) *Driver {
 		allowEmptyCloudConfig:                  options.AllowEmptyCloudConfig,
 		enableGetVolumeStats:                   options.EnableGetVolumeStats,
 		mountPermissions:                       options.MountPermissions,
+		kubeAPIQPS:                             options.KubeAPIQPS,
+		kubeAPIBurst:                           options.KubeAPIBurst,
 	}
 	d.Name = options.DriverName
 	d.Version = driverVersion
@@ -236,7 +248,7 @@ func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
 
 	userAgent := GetUserAgent(d.Name, d.customUserAgent, d.userAgentSuffix)
 	klog.V(2).Infof("driver userAgent: %s", userAgent)
-	d.cloud, err = getCloudProvider(kubeconfig, d.NodeID, d.cloudConfigSecretName, d.cloudConfigSecretNamespace, userAgent, d.allowEmptyCloudConfig)
+	d.cloud, err = getCloudProvider(kubeconfig, d.NodeID, d.cloudConfigSecretName, d.cloudConfigSecretNamespace, userAgent, d.allowEmptyCloudConfig, d.kubeAPIQPS, d.kubeAPIBurst)
 	if err != nil {
 		klog.Fatalf("failed to get Azure Cloud Provider, error: %v", err)
 	}
@@ -425,7 +437,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 	}
 	klog.V(2).Infof("volumeID(%s) authEnv: %s", volumeID, authEnv)
 
-	if protocol == nfs {
+	if protocol == NFS {
 		// nfs protocol does not need account key, return directly
 		return rgName, accountName, accountKey, containerName, authEnv, err
 	}
@@ -617,6 +629,18 @@ func isSupportedProtocol(protocol string) bool {
 	return false
 }
 
+func isSupportedAccessTier(accessTier string) bool {
+	if accessTier == "" {
+		return true
+	}
+	for _, tier := range storage.PossibleAccessTierValues() {
+		if accessTier == string(tier) {
+			return true
+		}
+	}
+	return false
+}
+
 // container names can contain only lowercase letters, numbers, and hyphens,
 // and must begin and end with a letter or a number
 func isSupportedContainerNamePrefix(prefix string) bool {
@@ -758,18 +782,27 @@ func (d *Driver) GetStorageAccountFromSecret(secretName, secretNamespace string)
 }
 
 // getSubnetResourceID get default subnet resource ID from cloud provider config
-func (d *Driver) getSubnetResourceID() string {
+func (d *Driver) getSubnetResourceID(vnetResourceGroup, vnetName, subnetName string) string {
 	subsID := d.cloud.SubscriptionID
 	if len(d.cloud.NetworkResourceSubscriptionID) > 0 {
 		subsID = d.cloud.NetworkResourceSubscriptionID
 	}
 
-	rg := d.cloud.ResourceGroup
-	if len(d.cloud.VnetResourceGroup) > 0 {
-		rg = d.cloud.VnetResourceGroup
+	if len(vnetResourceGroup) == 0 {
+		vnetResourceGroup = d.cloud.ResourceGroup
+		if len(d.cloud.VnetResourceGroup) > 0 {
+			vnetResourceGroup = d.cloud.VnetResourceGroup
+		}
 	}
 
-	return fmt.Sprintf(subnetTemplate, subsID, rg, d.cloud.VnetName, d.cloud.SubnetName)
+	if len(vnetName) == 0 {
+		vnetName = d.cloud.VnetName
+	}
+
+	if len(subnetName) == 0 {
+		subnetName = d.cloud.SubnetName
+	}
+	return fmt.Sprintf(subnetTemplate, subsID, vnetResourceGroup, vnetName, subnetName)
 }
 
 func (d *Driver) useDataPlaneAPI(volumeID, accountName string) bool {

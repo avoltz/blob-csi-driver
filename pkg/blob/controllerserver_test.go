@@ -26,9 +26,9 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/utils/pointer"
 
 	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2021-09-01/storage"
-	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
@@ -237,7 +237,7 @@ func TestCreateVolume(t *testing.T) {
 					controllerServiceCapability,
 				}
 				_, err := d.CreateVolume(context.Background(), req)
-				expectedErr := status.Errorf(codes.InvalidArgument, "protocol(unit-test) is not supported, supported protocol list: [edgecache fuse nfs]")
+				expectedErr := status.Errorf(codes.InvalidArgument, "protocol(unit-test) is not supported, supported protocol list: [edgecache fuse fuse2 nfs]")
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("actualErr: (%v), expectedErr: (%v)", err, expectedErr)
 				}
@@ -1038,7 +1038,7 @@ func TestValidateVolumeCapabilities(t *testing.T) {
 
 	for _, test := range testCases {
 		res, err := d.ValidateVolumeCapabilities(context.Background(), test.req)
-		d.cloud.BlobClient = newMockBlobClient(&test.clientErr, to.StringPtr(""), test.containerProp)
+		d.cloud.BlobClient = newMockBlobClient(&test.clientErr, pointer.String(""), test.containerProp)
 		assert.Equal(t, test.expectedErr, err, "Error in testcase (%s): Errors must match", test.name)
 		assert.Equal(t, test.expectedRes, res, "Error in testcase (%s): Response must match", test.name)
 	}

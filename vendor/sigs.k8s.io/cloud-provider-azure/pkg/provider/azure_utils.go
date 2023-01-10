@@ -31,6 +31,7 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
+	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	"sigs.k8s.io/cloud-provider-azure/pkg/consts"
 )
 
@@ -55,12 +56,13 @@ func newLockMap() *lockMap {
 func (lm *lockMap) LockEntry(entry string) {
 	lm.Lock()
 	// check if entry does not exists, then add entry
-	if _, exists := lm.mutexMap[entry]; !exists {
-		lm.addEntry(entry)
+	mutex, exists := lm.mutexMap[entry]
+	if !exists {
+		mutex = &sync.Mutex{}
+		lm.mutexMap[entry] = mutex
 	}
-
 	lm.Unlock()
-	lm.lockEntry(entry)
+	mutex.Lock()
 }
 
 // UnlockEntry release the lock associated with the specific entry
@@ -68,22 +70,11 @@ func (lm *lockMap) UnlockEntry(entry string) {
 	lm.Lock()
 	defer lm.Unlock()
 
-	if _, exists := lm.mutexMap[entry]; !exists {
+	mutex, exists := lm.mutexMap[entry]
+	if !exists {
 		return
 	}
-	lm.unlockEntry(entry)
-}
-
-func (lm *lockMap) addEntry(entry string) {
-	lm.mutexMap[entry] = &sync.Mutex{}
-}
-
-func (lm *lockMap) lockEntry(entry string) {
-	lm.mutexMap[entry].Lock()
-}
-
-func (lm *lockMap) unlockEntry(entry string) {
-	lm.mutexMap[entry].Unlock()
+	mutex.Unlock()
 }
 
 func getContextWithCancel() (context.Context, context.CancelFunc) {
@@ -261,22 +252,6 @@ func getNodePrivateIPAddresses(node *v1.Node) []string {
 	return addresses
 }
 
-func isLBBackendPoolTypeIPConfig(service *v1.Service, lb *network.LoadBalancer, clusterName string) bool {
-	if lb == nil || lb.LoadBalancerPropertiesFormat == nil || lb.BackendAddressPools == nil {
-		klog.V(4).Infof("isLBBackendPoolTypeIPConfig: no backend pools in the LB %s", to.String(lb.Name))
-		return false
-	}
-	lbBackendPoolName := getBackendPoolName(clusterName, service)
-	for _, bp := range *lb.BackendAddressPools {
-		if strings.EqualFold(to.String(bp.Name), lbBackendPoolName) {
-			return bp.BackendAddressPoolPropertiesFormat != nil &&
-				bp.BackendIPConfigurations != nil &&
-				len(*bp.BackendIPConfigurations) != 0
-		}
-	}
-	return false
-}
-
 func getBoolValueFromServiceAnnotations(service *v1.Service, key string) bool {
 	if l, found := service.Annotations[key]; found {
 		return strings.EqualFold(strings.TrimSpace(l), consts.TrueAnnotationValue)
@@ -311,4 +286,59 @@ func removeDuplicatedSecurityRules(rules []network.SecurityRule) []network.Secur
 		ruleNames[to.String(rules[i].Name)] = true
 	}
 	return rules
+}
+
+func getVMSSVMCacheKey(resourceGroup, vmssName string) string {
+	cacheKey := strings.ToLower(fmt.Sprintf("%s/%s", resourceGroup, vmssName))
+	return cacheKey
+}
+
+// isNodeInVMSSVMCache check whether nodeName is in vmssVMCache
+func isNodeInVMSSVMCache(nodeName string, vmssVMCache *azcache.TimedCache) bool {
+	if vmssVMCache == nil {
+		return false
+	}
+
+	var isInCache bool
+
+	vmssVMCache.Lock.Lock()
+	defer vmssVMCache.Lock.Unlock()
+
+	for _, entry := range vmssVMCache.Store.List() {
+		if entry != nil {
+			e := entry.(*azcache.AzureCacheEntry)
+			e.Lock.Lock()
+			data := e.Data
+			if data != nil {
+				data.(*sync.Map).Range(func(vmName, _ interface{}) bool {
+					if vmName != nil && vmName.(string) == nodeName {
+						isInCache = true
+						return false
+					}
+					return true
+				})
+			}
+			e.Lock.Unlock()
+		}
+
+		if isInCache {
+			break
+		}
+	}
+
+	return isInCache
+}
+
+func extractVmssVMName(name string) (string, string, error) {
+	split := strings.SplitAfter(name, consts.VMSSNameSeparator)
+	if len(split) < 2 {
+		klog.V(3).Infof("Failed to extract vmssVMName %q", name)
+		return "", "", ErrorNotVmssInstance
+	}
+
+	ssName := strings.Join(split[0:len(split)-1], "")
+	// removing the trailing `vmssNameSeparator` since we used SplitAfter
+	ssName = ssName[:len(ssName)-1]
+	instanceID := split[len(split)-1]
+	return ssName, instanceID, nil
 }

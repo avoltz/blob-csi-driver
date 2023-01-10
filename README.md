@@ -7,18 +7,20 @@
 This driver allows Kubernetes to access Azure Storage through one of following methods:
  - [azure-storage-fuse](https://github.com/Azure/azure-storage-fuse)
  - [NFSv3](https://docs.microsoft.com/en-us/azure/storage/blobs/network-file-system-protocol-support)
+ 
+Disclaimer: Deploying this driver manually is not an officially supported Microsoft product. For a fully managed and supported experience on Kubernetes, use [AKS with the managed blob csi driver](https://learn.microsoft.com/en-us/azure/aks/azure-blob-csi).
 
 #### csi plugin name: `blob.csi.azure.com`
 
 ### Project status: GA
 
 ### Container Images & Kubernetes Compatibility:
-|driver version  |Image                                                 | supported k8s version | built-in blobfuse version |
-|----------------|------------------------------------------------------|-----------------------|---------------------------|
-|master branch   |mcr.microsoft.com/k8s/csi/blob-csi:latest             | 1.20+                 | 1.4.5                     |
-|v1.16.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.16.0 | 1.20+                 | 1.4.5                     |
-|v1.15.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.15.0 | 1.20+                 | 1.4.4                     |
-|v1.14.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.14.0 | 1.20+                 | 1.4.4                     |
+|driver version  |Image                                                 | supported k8s version | built-in blobfuse v1 version | built-in blobfuse v2 version|
+|----------------|------------------------------------------------------|-----------------------|------------------------------| ----------------------------|
+|master branch   |mcr.microsoft.com/k8s/csi/blob-csi:latest             | 1.21+                 | 1.4.5                        | 2.0.1           | 
+|v1.19.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.19.0 | 1.21+                 | 1.4.5                        | 2.0.1           |
+|v1.18.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.18.0 | 1.21+                 | 1.4.5                        | 2.0.0-preview.3 |
+|v1.17.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.17.0 | 1.21+                 | 1.4.5                        | n/a             |
 
 ### Driver parameters
 Please refer to `blob.csi.azure.com` [driver parameters](./docs/driver-parameters.md)

@@ -12,10 +12,13 @@ skuName | Azure storage account type (alias: `storageAccountType`) | `Standard_L
 location | Azure location | `eastus`, `westus`, etc. | No | if empty, driver will use the same location name as current k8s cluster
 resourceGroup | Azure resource group name | existing resource group name | No | if empty, driver will use the same resource group name as current k8s cluster
 storageAccount | specify Azure storage account name| STORAGE_ACCOUNT_NAME | - No for blobfuse mount </br> - Yes for NFSv3 mount |  - For blobfuse mount: if empty, driver will find a suitable storage account that matches `skuName` in the same resource group; if a storage account name is provided, storage account must exist. </br>  - For NFSv3 mount, storage account name must be provided
-protocol | specify blobfuse mount or NFSv3 mount | `fuse`, `nfs` | No | `fuse`
+protocol | specify blobfuse, blobfuse2 or NFSv3 mount (blobfuse2 is still in Preview) | `fuse`, `fuse2`, `nfs` | No | `fuse`
+networkEndpointType | specify network endpoint type for the storage account created by driver. If `privateEndpoint` is specified, a private endpoint will be created for the storage account. For other cases, a service endpoint will be created for NFS protocol. | "",`privateEndpoint` | No | ``
+storageEndpointSuffix | specify Azure storage endpoint suffix | `core.windows.net`, `core.chinacloudapi.cn`, etc | No | if empty, driver will use default storage endpoint suffix according to cloud environment, e.g. `core.windows.net`
 containerName | specify the existing container(directory) name | existing container name | No | if empty, driver will create a new container name, starting with `pvc-fuse` for blobfuse or `pvc-nfs` for NFSv3
 containerNamePrefix | specify Azure storage directory prefix created by driver | can only contain lowercase letters, numbers, hyphens, and length should be less than 21 | No |
 server | specify Azure storage account server address | existing server address, e.g. `accountname.privatelink.blob.core.windows.net` | No | if empty, driver will use default `accountname.blob.core.windows.net` or other sovereign cloud account address
+accessTier | [Access tier for storage account](https://learn.microsoft.com/en-us/azure/storage/blobs/access-tiers-overview) | Standard account can choose `Hot` or `Cool`, and Premium account can only choose `Premium` | No | empty(use default setting for different storage account types)
 allowBlobPublicAccess | Allow or disallow public access to all blobs or containers for storage account created by driver | `true`,`false` | No | `false`
 requireInfraEncryption | specify whether or not the service applies a secondary layer of encryption with platform managed keys for data at rest for storage account created by driver | `true`,`false` | No | `false`
 storageEndpointSuffix | specify Azure storage endpoint suffix | `core.windows.net`, `core.chinacloudapi.cn`, etc | No | if empty, driver will use default storage endpoint suffix according to cloud environment
@@ -36,7 +39,7 @@ subnetName | subnet name | existing subnet name of the agent node | No | if empt
 
  - `fsGroup` securityContext setting
 
-Blobfuse driver does not honor `fsGroup` securityContext setting, instead user could use `-o gid=1000` in `mountoptions` to set ownership, check [here](https://github.com/Azure/Azure-storage-fuse#mount-options) for more mountoptions.
+Blobfuse driver does not honor `fsGroup` securityContext setting, instead user could use `-o gid=1000` in `mountoptions` to set ownership, check [here](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#mount-options) for more mountoptions.
 
  - [Azure DataLake storage account](https://docs.microsoft.com/en-us/azure/storage/blobs/upgrade-to-data-lake-storage-gen2-how-to) support
    - set `isHnsEnabled: "true"` in storage class parameter to create ADLS account by driver in dynamic provisioning.
@@ -66,10 +69,11 @@ pvc-92a4d7f2-f23b-4904-bad4-2cbfcff6e388
 
 Name | Meaning | Available Value | Mandatory | Default value
 --- | --- | --- | --- | ---
+volumeHandle | Specify a value the driver can use to uniquely identify the storage blob container in the cluster. | A recommended way to produce a unique value is to combine the globally unique storage account name and container name: {account-name}_{container-name}. Note: The # character is reserved for internal use and can't be used in a volume handle. | Yes |
 volumeAttributes.resourceGroup | Azure resource group name | existing resource group name | No | if empty, driver will use the same resource group name as current k8s cluster
 volumeAttributes.storageAccount | existing storage account name | existing storage account name | Yes |
 volumeAttributes.containerName | existing container name | existing container name | Yes |
-volumeAttributes.protocol | specify blobfuse mount or NFSv3 mount | `fuse`, `nfs` | No | `fuse`
+volumeAttributes.protocol | specify blobfuse, blobfuse2 or NFSv3 mount (blobfuse2 is still in Preview) | `fuse`, `fuse2`, `nfs` | No | `fuse`
 --- | **Following parameters are only for blobfuse** | --- | --- |
 volumeAttributes.secretName | secret name that stores storage account name and key(only applies for SMB) | | No |
 volumeAttributes.secretNamespace | secret namespace | `default`,`kube-system`, etc | No | pvc namespace
@@ -77,10 +81,10 @@ nodeStageSecretRef.name | secret name that stores(check below examples):<br>`azu
 nodeStageSecretRef.namespace | secret namespace | k8s namespace  |  Yes  |
 --- | **Following parameters are only for NFS protocol** | --- | --- |
 volumeAttributes.mountPermissions | mounted folder permissions | `0777` | No |
---- | **Following parameters are only for feature: blobfuse [Managed Identity and Service Principal Name auth](https://github.com/Azure/azure-storage-fuse#environment-variables)** | --- | --- |
+--- | **Following parameters are only for feature: blobfuse [Managed Identity and Service Principal Name auth](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#environment-variables)** | --- | --- |
 volumeAttributes.AzureStorageAuthType | Authentication Type | `Key`, `SAS`, `MSI`, `SPN` | No | `Key`
 volumeAttributes.AzureStorageIdentityClientID | Identity Client ID |  | No |
-volumeAttributes.AzureStorageIdentityObjectID | Identity Object ID (deprecated) |  | No |
+volumeAttributes.AzureStorageIdentityObjectID | Identity Object ID |  | No |
 volumeAttributes.AzureStorageIdentityResourceID | Identity Resource ID |  | No |
 volumeAttributes.MSIEndpoint | MSI Endpoint |  | No |
 volumeAttributes.AzureStorageSPNClientID | SPN Client ID |  | No |
@@ -100,9 +104,12 @@ kubectl create secret generic azure-secret --from-literal azurestoragespnclients
  ```
 
 ### Tips
- - only mounting blobfuse requires account key, and if secret is not provided in PV config, driver would try to get `azure-storage-account-{accountname}-secret` in the pod namespace, if not found, driver would try using kubelet identity to get account key directly using Azure API.
- - mounting blob storage NFSv3 does not need account key, it requires storage account configured with same vnet with agent node.
- - blobfuse does not support private link well, check details [here](https://github.com/Azure/azure-storage-fuse/wiki/2.-Configuring-and-Running#private-link)
+ - mounting blobfuse requires account key, if `nodeStageSecretRef` field is not provided in PV config, azure file driver would try to get `azure-storage-account-{accountname}-secret` in the pod namespace first, if that secret does not exist, it would get account key by Azure storage account API directly using kubelet identity (make sure kubelet identity has reader access to the storage account).
+ - mounting blob storage NFSv3 does not need account key, NFS mount access is configured by following setting:
+    - `Firewalls and virtual networks`: select `Enabled from selected virtual networks and IP addresses` with same vnet as agent node
+ - blobfuse cache(`--tmp-path` [mount option](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#mount-options))
+   - blobfuse cache is on `/mnt` directory by default, `/mnt` is mounted on temp disk if VM sku provides temp disk, `/mnt` is mounted on os disk if VM sku does not provide temp disk
+   - with blobfuse-proxy deployment (default on AKS), user could set `--tmp-path=` mount option to specify a different cache directory
  - [Mount an azure blob storage with a dedicated user-assigned managed identity](https://github.com/qxsch/Azure-Aks/tree/master/aks-blobfuse-mi)
 
 #### `containerName` parameter supports following pv/pvc metadata conversion

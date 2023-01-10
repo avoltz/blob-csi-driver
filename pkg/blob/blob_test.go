@@ -586,7 +586,7 @@ func TestGetAuthEnv(t *testing.T) {
 				volumeID := "unique-volumeid"
 				attrib[storageAccountField] = "accountname"
 				attrib[containerNameField] = "containername"
-				rg, accountName, accountkey, containerName, authEnv, err := d.GetAuthEnv(context.TODO(), volumeID, nfs, attrib, secret)
+				rg, accountName, accountkey, containerName, authEnv, err := d.GetAuthEnv(context.TODO(), volumeID, NFS, attrib, secret)
 				if err != nil {
 					t.Errorf("actualErr: (%v), expect no error", err)
 				}
@@ -1122,7 +1122,7 @@ func TestGetSubnetResourceID(t *testing.T) {
 				d.cloud.NetworkResourceSubscriptionID = ""
 				d.cloud.ResourceGroup = "foo"
 				d.cloud.VnetResourceGroup = "foo"
-				actualOutput := d.getSubnetResourceID()
+				actualOutput := d.getSubnetResourceID("", "", "")
 				expectedOutput := fmt.Sprintf(subnetTemplate, d.cloud.SubscriptionID, "foo", d.cloud.VnetName, d.cloud.SubnetName)
 				assert.Equal(t, actualOutput, expectedOutput, "cloud.SubscriptionID should be used as the SubID")
 			},
@@ -1136,7 +1136,7 @@ func TestGetSubnetResourceID(t *testing.T) {
 				d.cloud.NetworkResourceSubscriptionID = "fakeNetSubID"
 				d.cloud.ResourceGroup = "foo"
 				d.cloud.VnetResourceGroup = "foo"
-				actualOutput := d.getSubnetResourceID()
+				actualOutput := d.getSubnetResourceID("", "", "")
 				expectedOutput := fmt.Sprintf(subnetTemplate, d.cloud.NetworkResourceSubscriptionID, "foo", d.cloud.VnetName, d.cloud.SubnetName)
 				assert.Equal(t, actualOutput, expectedOutput, "cloud.NetworkResourceSubscriptionID should be used as the SubID")
 			},
@@ -1150,7 +1150,7 @@ func TestGetSubnetResourceID(t *testing.T) {
 				d.cloud.NetworkResourceSubscriptionID = "bar"
 				d.cloud.ResourceGroup = "fakeResourceGroup"
 				d.cloud.VnetResourceGroup = ""
-				actualOutput := d.getSubnetResourceID()
+				actualOutput := d.getSubnetResourceID("", "", "")
 				expectedOutput := fmt.Sprintf(subnetTemplate, "bar", d.cloud.ResourceGroup, d.cloud.VnetName, d.cloud.SubnetName)
 				assert.Equal(t, actualOutput, expectedOutput, "cloud.Resourcegroup should be used as the rg")
 			},
@@ -1164,9 +1164,23 @@ func TestGetSubnetResourceID(t *testing.T) {
 				d.cloud.NetworkResourceSubscriptionID = "bar"
 				d.cloud.ResourceGroup = "fakeResourceGroup"
 				d.cloud.VnetResourceGroup = "fakeVnetResourceGroup"
-				actualOutput := d.getSubnetResourceID()
+				actualOutput := d.getSubnetResourceID("", "", "")
 				expectedOutput := fmt.Sprintf(subnetTemplate, "bar", d.cloud.VnetResourceGroup, d.cloud.VnetName, d.cloud.SubnetName)
 				assert.Equal(t, actualOutput, expectedOutput, "cloud.VnetResourceGroup should be used as the rg")
+			},
+		},
+		{
+			name: "VnetResourceGroup, vnetName, subnetName is specified",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{}
+				d.cloud.SubscriptionID = "bar"
+				d.cloud.NetworkResourceSubscriptionID = "bar"
+				d.cloud.ResourceGroup = "fakeResourceGroup"
+				d.cloud.VnetResourceGroup = "fakeVnetResourceGroup"
+				actualOutput := d.getSubnetResourceID("vnetrg", "vnetName", "subnetName")
+				expectedOutput := fmt.Sprintf(subnetTemplate, "bar", "vnetrg", "vnetName", "subnetName")
+				assert.Equal(t, actualOutput, expectedOutput, "VnetResourceGroup, vnetName, subnetName is specified")
 			},
 		},
 	}
@@ -1249,6 +1263,19 @@ func TestAppendDefaultMountOptions(t *testing.T) {
 				"--pre-mount-validate=false",
 				"--empty-dir-check=false",
 				"--tmp-path=/tmp",
+				"--use-https=true",
+				"targetPath",
+			},
+		},
+		{
+			options:       []string{"targetPath", "--tmp-path=/var/log", "--pre-mount-validate=false"},
+			tmpPath:       "/tmp",
+			containerName: "containerName",
+			expected: []string{"--cancel-list-on-mount-seconds=10",
+				"--container-name=containerName",
+				"--pre-mount-validate=false",
+				"--empty-dir-check=false",
+				"--tmp-path=/var/log",
 				"--use-https=true",
 				"targetPath",
 			},
@@ -1476,6 +1503,53 @@ func TestReplaceWithMap(t *testing.T) {
 		result := replaceWithMap(test.str, test.m)
 		if result != test.expected {
 			t.Errorf("test[%s]: unexpected output: %v, expected result: %v", test.desc, result, test.expected)
+		}
+	}
+}
+
+func TestIsSupportedAccessTier(t *testing.T) {
+	tests := []struct {
+		accessTier     string
+		expectedResult bool
+	}{
+		{
+			accessTier:     "",
+			expectedResult: true,
+		},
+		{
+			accessTier:     "TransactionOptimized",
+			expectedResult: false,
+		},
+		{
+			accessTier:     "Hot",
+			expectedResult: true,
+		},
+		{
+			accessTier:     "Cool",
+			expectedResult: true,
+		},
+		{
+			accessTier:     "Premium",
+			expectedResult: true,
+		},
+		{
+			accessTier:     "transactionOptimized",
+			expectedResult: false,
+		},
+		{
+			accessTier:     "premium",
+			expectedResult: false,
+		},
+		{
+			accessTier:     "unknown",
+			expectedResult: false,
+		},
+	}
+
+	for _, test := range tests {
+		result := isSupportedAccessTier(test.accessTier)
+		if result != test.expectedResult {
+			t.Errorf("isSupportedTier(%s) returned with %v, not equal to %v", test.accessTier, result, test.expectedResult)
 		}
 	}
 }

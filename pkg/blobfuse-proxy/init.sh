@@ -20,6 +20,8 @@ INSTALL_BLOBFUSE_PROXY=${INSTALL_BLOBFUSE_PROXY:-true}
 INSTALL_BLOBFUSE=${INSTALL_BLOBFUSE:-true}
 DISABLE_UPDATEDB=${DISABLE_UPDATEDB:-true}
 SET_MAX_OPEN_FILE_NUM=${SET_MAX_OPEN_FILE_NUM:-true}
+SET_READ_AHEAD_SIZE=${SET_READ_AHEAD_SIZE:-true}
+READ_AHEAD_KB=${READ_AHEAD_KB:-15380}
 
 HOST_CMD="nsenter --mount=/proc/1/ns/mnt"
 
@@ -27,9 +29,9 @@ HOST_CMD="nsenter --mount=/proc/1/ns/mnt"
 if [ "${INSTALL_BLOBFUSE}" = "true" ]
 then
   cp /blobfuse-proxy/packages-microsoft-prod.deb /host/etc/
-  $HOST_CMD dpkg -i /etc/packages-microsoft-prod.deb && \
+  yes | $HOST_CMD dpkg -i /etc/packages-microsoft-prod.deb && \
   $HOST_CMD apt update && \
-  $HOST_CMD apt-get install -y fuse blobfuse="${BLOBFUSE_VERSION}" && \
+  $HOST_CMD apt-get install -y fuse blobfuse2 blobfuse="${BLOBFUSE_VERSION}" && \
   $HOST_CMD rm -f /etc/packages-microsoft-prod.deb
 fi
 
@@ -46,6 +48,7 @@ fi
 if [ "$updateBlobfuseProxy" = "true" ];then
   echo "copy blobfuse-proxy...."
   rm -rf /host/var/lib/kubelet/plugins/blob.csi.azure.com/blobfuse-proxy.sock
+  rm -rf /host/usr/bin/blobfuse-proxy
   cp /blobfuse-proxy/blobfuse-proxy /host/usr/bin/blobfuse-proxy
   chmod 755 /host/usr/bin/blobfuse-proxy
 fi
@@ -89,4 +92,14 @@ then
   sed -i 's/PRUNEFS="NFS/PRUNEFS="fuse blobfuse NFS/g' ${updateDBConfigPath}
   echo "after change:"
   cat ${updateDBConfigPath}
+fi
+
+if [ "${SET_READ_AHEAD_SIZE}" = "true" ]
+then
+  echo "set read ahead size to ${READ_AHEAD_KB}KB"
+  AWK_PATH=$(which awk)
+  cat > /host/etc/udev/rules.d/99-nfs.rules <<EOF
+SUBSYSTEM=="bdi", ACTION=="add", PROGRAM="$AWK_PATH -v bdi=\$kernel 'BEGIN{ret=1} {if (\$4 == bdi){ret=0}} END{exit ret}' /proc/fs/nfsfs/volumes", ATTR{read_ahead_kb}="$READ_AHEAD_KB"
+EOF
+  $HOST_CMD udevadm control --reload
 fi
