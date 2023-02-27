@@ -5,6 +5,7 @@
 
 ### Tips
  - configure with [blobfuse-proxy](../deploy/blobfuse-proxy) to make blobfuse mount still available after driver restart
+ > note: [blobfuse-proxy](../deploy/blobfuse-proxy) is only available on **debian** OS based agent node (not available on OpenShift)
    - specify `node.enableBlobfuseProxy=true` together with [blobfuse-proxy](../deploy/blobfuse-proxy)
  - run controller on control plane node: `--set controller.runOnControlPlane=true`
  - set replica of controller as `1`: `--set controller.replicas=1`
@@ -18,7 +19,7 @@
 ### install a specific version
 ```console
 helm repo add blob-csi-driver https://raw.githubusercontent.com/kubernetes-sigs/blob-csi-driver/master/charts
-helm install blob-csi-driver blob-csi-driver/blob-csi-driver --set node.enableBlobfuseProxy=true --namespace kube-system --version v1.19.0
+helm install blob-csi-driver blob-csi-driver/blob-csi-driver --set node.enableBlobfuseProxy=true --namespace kube-system --version v1.20.0
 ```
 
 ## install on Azure Stack
@@ -119,7 +120,6 @@ The following table lists the configurable parameters of the latest Azure Blob S
 | `node.allowEmptyCloudConfig`                          | Whether allow running node driver without cloud config          | `true`
 | `node.allowInlineVolumeKeyAccessWithIdentity`         | Whether allow accessing storage account key using cluster identity for inline volume          | `false`
 | `node.maxUnavailable`                                 | `maxUnavailable` value of driver node daemonset       | `1`
-| `node.metricsPort`                                    | metrics port of csi-blob-node                         | `29635`                                                          |
 | `node.livenessProbe.healthPort `                      | health check port for liveness probe                  | `29633` |
 | `node.logLevel`                                       | node driver log level                                 | `5`                                                            |
 | `node.mountPermissions`                               | mounted folder permissions (only applies for NFS)                 | `0777`

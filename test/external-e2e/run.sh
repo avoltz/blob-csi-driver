@@ -20,8 +20,7 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel)
 DRIVER="test"
 
 install_ginkgo () {
-    apt update -y
-    apt install -y golang-ginkgo-dev
+    go install github.com/onsi/ginkgo/ginkgo@v1.14.0
 }
 
 setup_e2e_binaries() {
@@ -37,6 +36,7 @@ setup_e2e_binaries() {
 
      # test on alternative driver name
     sed -i "s/blob.csi.azure.com/$DRIVER.csi.azure.com/g" deploy/example/storageclass-blobfuse.yaml
+    sed -i "s/blob.csi.azure.com/$DRIVER.csi.azure.com/g" deploy/example/storageclass-blobfuse2.yaml
     sed -i "s/blob.csi.azure.com/$DRIVER.csi.azure.com/g" deploy/example/storageclass-blob-nfs.yaml
     make e2e-bootstrap
     sed -i "s/csi-blob-controller/csi-$DRIVER-controller/g" deploy/example/metrics/csi-blob-controller-svc.yaml

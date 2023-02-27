@@ -74,6 +74,9 @@ const (
 	containerNamePrefixField     = "containernameprefix"
 	storeAccountKeyField         = "storeaccountkey"
 	isHnsEnabledField            = "ishnsenabled"
+	softDeleteBlobsField         = "softdeleteblobs"
+	softDeleteContainersField    = "softdeletecontainers"
+	enableBlobVersioningField    = "enableblobversioning"
 	getAccountKeyFromSecretField = "getaccountkeyfromsecret"
 	keyVaultURLField             = "keyvaulturl"
 	keyVaultSecretNameField      = "keyvaultsecretname"
@@ -156,6 +159,7 @@ type DriverOptions struct {
 	AllowInlineVolumeKeyAccessWithIdentity bool
 	EnableGetVolumeStats                   bool
 	AppendTimeStampInCacheDir              bool
+	AppendMountErrorHelpLink               bool
 	MountPermissions                       uint64
 	KubeAPIQPS                             float64
 	KubeAPIBurst                           int
@@ -179,6 +183,7 @@ type Driver struct {
 	enableGetVolumeStats                   bool
 	allowInlineVolumeKeyAccessWithIdentity bool
 	appendTimeStampInCacheDir              bool
+	appendMountErrorHelpLink               bool
 	blobfuseProxyConnTimout                int
 	mountPermissions                       uint64
 	edgeCacheManager                       *edgecache.Manager
@@ -219,6 +224,7 @@ func NewDriver(options *DriverOptions) *Driver {
 		enableBlobMockMount:                    options.EnableBlobMockMount,
 		allowEmptyCloudConfig:                  options.AllowEmptyCloudConfig,
 		enableGetVolumeStats:                   options.EnableGetVolumeStats,
+		appendMountErrorHelpLink:               options.AppendMountErrorHelpLink,
 		mountPermissions:                       options.MountPermissions,
 		kubeAPIQPS:                             options.KubeAPIQPS,
 		kubeAPIBurst:                           options.KubeAPIBurst,
