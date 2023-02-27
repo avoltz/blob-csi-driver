@@ -152,7 +152,6 @@ spec:
             - "--edgecache-mount-endpoint=$(EDGECACHE_MOUNT_ENDPOINT)"
             - "--enable-blobfuse-proxy={{ .Values.node.enableBlobfuseProxy }}"
             - "--nodeid=$(KUBE_NODE_NAME)"
-            - "--metrics-address=0.0.0.0:{{ .Values.node.metricsPort }}"
             - "--drivername={{ .Values.driver.name }}"
             - "--cloud-config-secret-name={{ .Values.node.cloudConfigSecretName }}"
             - "--cloud-config-secret-namespace={{ .Values.node.cloudConfigSecretNamespace }}"

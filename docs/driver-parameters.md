@@ -36,6 +36,9 @@ mountPermissions | mounted folder permissions. The default is `0777`, if set as 
 vnetResourceGroup | specify vnet resource group where virtual network is | existing resource group name | No | if empty, driver will use the `vnetResourceGroup` value in azure cloud config file
 vnetName | virtual network name | existing virtual network name | No | if empty, driver will use the `vnetName` value in azure cloud config file
 subnetName | subnet name | existing subnet name of the agent node | No | if empty, driver will use the `subnetName` value in azure cloud config file
+softDeleteBlobs | Enable [soft delete for blobs](https://learn.microsoft.com/en-us/azure/storage/blobs/soft-delete-blob-overview), specify the days to retain deleted blobs | "7" | No | Soft Delete Blobs is disabled if empty
+softDeleteContainers | Enable [soft delete for containers](https://learn.microsoft.com/en-us/azure/storage/blobs/soft-delete-container-overview), specify the days to retain deleted containers | "7" | No | Soft Delete Containers is disabled if empty
+enableBlobVersioning | Enable [blob versioning](https://learn.microsoft.com/en-us/azure/storage/blobs/versioning-overview), can't enabled when `protocol` is `nfs` or `isHnsEnabled` is `true` | `true`,`false` | No | versioning for blobs is disabled if empty
 
  - `fsGroup` securityContext setting
 
@@ -69,7 +72,7 @@ pvc-92a4d7f2-f23b-4904-bad4-2cbfcff6e388
 
 Name | Meaning | Available Value | Mandatory | Default value
 --- | --- | --- | --- | ---
-volumeHandle | Specify a value the driver can use to uniquely identify the storage blob container in the cluster. | A recommended way to produce a unique value is to combine the globally unique storage account name and container name: {account-name}_{container-name}. Note: The # character is reserved for internal use and can't be used in a volume handle. | Yes |
+volumeHandle | Specify a value the driver can use to uniquely identify the storage blob container in the cluster. | A recommended way to produce a unique value is to combine the globally unique storage account name and container name: {account-name}_{container-name}. Note: the # character is reserved for internal use. | Yes |
 volumeAttributes.resourceGroup | Azure resource group name | existing resource group name | No | if empty, driver will use the same resource group name as current k8s cluster
 volumeAttributes.storageAccount | existing storage account name | existing storage account name | Yes |
 volumeAttributes.containerName | existing container name | existing container name | Yes |
@@ -111,6 +114,7 @@ kubectl create secret generic azure-secret --from-literal azurestoragespnclients
    - blobfuse cache is on `/mnt` directory by default, `/mnt` is mounted on temp disk if VM sku provides temp disk, `/mnt` is mounted on os disk if VM sku does not provide temp disk
    - with blobfuse-proxy deployment (default on AKS), user could set `--tmp-path=` mount option to specify a different cache directory
  - [Mount an azure blob storage with a dedicated user-assigned managed identity](https://github.com/qxsch/Azure-Aks/tree/master/aks-blobfuse-mi)
+ - [Blobfuse Performance and caching](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#performance-and-caching)
 
 #### `containerName` parameter supports following pv/pvc metadata conversion
 > if `containerName` value contains following strings, it would be converted into corresponding pv/pvc name or namespace
