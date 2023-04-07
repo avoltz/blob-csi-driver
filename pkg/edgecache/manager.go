@@ -204,7 +204,7 @@ func sendMount(client csi_mounts.CSIMountsClient, account string, container stri
 	}()
 	select {
 	case <-result:
-		klog.V(3).Infof("AddMount: succeeeded for %s/%s", account, container)
+		klog.V(3).Infof("AddMount: succeeded for %s/%s", account, container)
 	case <-time.After(timeout):
 		return status.Errorf(codes.DeadlineExceeded, "Deadline exceeded for mount %q", targetPath)
 	}
