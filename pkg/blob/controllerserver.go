@@ -182,7 +182,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 
 	if pointer.BoolDeref(enableBlobVersioning, false) {
 		if protocol == NFS || pointer.BoolDeref(isHnsEnabled, false) {
-			return nil, status.Errorf(codes.InvalidArgument, fmt.Sprintf("enableBlobVersioning is not supported for NFS protocol or HNS enabled account"))
+			return nil, status.Errorf(codes.InvalidArgument, "enableBlobVersioning is not supported for NFS protocol or HNS enabled account")
 		}
 	}
 
@@ -395,7 +395,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			}
 		}
 
-		secretName, err := setAzureCredentials(d.cloud.KubeClient, accountName, accountKey, secretNamespace)
+		secretName, err := setAzureCredentials(ctx, d.cloud.KubeClient, accountName, accountKey, secretNamespace)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to store storage account key: %v", err)
 		}

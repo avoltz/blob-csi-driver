@@ -49,6 +49,11 @@ import (
 	mount_azure_blob "sigs.k8s.io/blob-csi-driver/pkg/blobfuse-proxy/pb"
 )
 
+const (
+	waitForMountInterval = 20 * time.Millisecond
+	waitForMountTimeout  = 3 * time.Second
+)
+
 type MountClient struct {
 	service mount_azure_blob.MountServiceClient
 }
@@ -160,13 +165,13 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
-func (d *Driver) mountBlobfuseWithProxy(args string, protocol string, authEnv []string) (string, error) {
-	klog.V(2).Infof("mouting using blobfuse proxy")
+func (d *Driver) mountBlobfuseWithProxy(args, protocol string, authEnv []string) (string, error) {
 	var resp *mount_azure_blob.MountAzureBlobResponse
 	var output string
 	connectionTimout := time.Duration(d.blobfuseProxyConnTimout) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimout)
 	defer cancel()
+	klog.V(2).Infof("start connecting to blobfuse proxy, protocol: %s, args: %s", protocol, args)
 	conn, err := grpc.DialContext(ctx, d.blobfuseProxyEndpoint, grpc.WithInsecure(), grpc.WithBlock())
 	if err == nil {
 		mountClient := NewMountClient(conn)
@@ -175,7 +180,7 @@ func (d *Driver) mountBlobfuseWithProxy(args string, protocol string, authEnv []
 			Protocol:  protocol,
 			AuthEnv:   authEnv,
 		}
-		klog.V(2).Infof("calling BlobfuseProxy: MountAzureBlob function")
+		klog.V(2).Infof("begin to mount with blobfuse proxy, protocol: %s, args: %s", protocol, args)
 		resp, err = mountClient.service.MountAzureBlob(context.TODO(), &mountreq)
 		if err != nil {
 			klog.Error("GRPC call returned with an error:", err)
@@ -188,15 +193,16 @@ func (d *Driver) mountBlobfuseWithProxy(args string, protocol string, authEnv []
 func (d *Driver) mountBlobfuseInsideDriver(args string, protocol string, authEnv []string) (string, error) {
 	var cmd *exec.Cmd
 
-	klog.V(2).Infof("mounting blobfuse inside driver")
+	mountLog := "mount inside driver with"
 	if protocol == Fuse2 {
-		klog.V(2).Infof("using blobfuse V2 to mount")
+		mountLog += " v2"
 		args = "mount " + args
 		cmd = exec.Command("blobfuse2", strings.Split(args, " ")...)
 	} else {
-		klog.V(2).Infof("using blobfuse V1 to mount")
+		mountLog += " v1"
 		cmd = exec.Command("blobfuse", strings.Split(args, " ")...)
 	}
+	klog.V(2).Infof("%s, protocol: %s, args: %s", mountLog, protocol, args)
 
 	cmd.Env = append(os.Environ(), authEnv...)
 	output, err := cmd.CombinedOutput()
@@ -365,7 +371,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		}); err != nil {
 			var helpLinkMsg string
 			if d.appendMountErrorHelpLink {
-				helpLinkMsg = fmt.Sprintf("\nPlease refer to http://aka.ms/blobmounterror for possible causes and solutions for mount errors.")
+				helpLinkMsg = "\nPlease refer to http://aka.ms/blobmounterror for possible causes and solutions for mount errors."
 			}
 			return nil, status.Error(codes.Internal, fmt.Sprintf("volume(%s) mount %q on %q failed with %v%s", volumeID, source, targetPath, err, helpLinkMsg))
 		}
@@ -424,7 +430,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	if err != nil {
 		var helpLinkMsg string
 		if d.appendMountErrorHelpLink {
-			helpLinkMsg = fmt.Sprintf("\nPlease refer to http://aka.ms/blobmounterror for possible causes and solutions for mount errors.")
+			helpLinkMsg = "\nPlease refer to http://aka.ms/blobmounterror for possible causes and solutions for mount errors."
 		}
 		err = status.Errorf(codes.Internal, "Mount failed with error: %v, output: %v%s", err, output, helpLinkMsg)
 		klog.Errorf("%v", err)
@@ -451,6 +457,12 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		}
 		os.Remove(targetPath)
 		return nil, err
+	}
+
+	// wait a few seconds to make sure blobfuse mount is successful
+	// please refer to https://github.com/Azure/azure-storage-fuse/pull/1088 for more details
+	if err := waitForMount(targetPath, waitForMountInterval, waitForMountTimeout); err != nil {
+		return nil, fmt.Errorf("failed to wait for mount: %w", err)
 	}
 
 	klog.V(2).Infof("volume(%s) mount on %q succeeded", volumeID, targetPath)
@@ -640,4 +652,25 @@ func (d *Driver) ensureMountPoint(target string, perm os.FileMode) (bool, error)
 		return !notMnt, err
 	}
 	return !notMnt, nil
+}
+
+func waitForMount(path string, intervel, timeout time.Duration) error {
+	timeAfter := time.After(timeout)
+	timeTick := time.Tick(intervel)
+
+	for {
+		select {
+		case <-timeTick:
+			notMount, err := mount.New("").IsLikelyNotMountPoint(path)
+			if err != nil {
+				return err
+			}
+			if !notMount {
+				klog.V(2).Infof("blobfuse mount at %s success", path)
+				return nil
+			}
+		case <-timeAfter:
+			return fmt.Errorf("timeout waiting for mount %s", path)
+		}
+	}
 }
