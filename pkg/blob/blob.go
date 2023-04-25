@@ -380,7 +380,7 @@ func isSASToken(key string) bool {
 }
 
 // GetAuthEnv return <accountName, containerName, authEnv, error>
-func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attrib, secrets map[string]string) (string, string, string, string, []string, error) {
+func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attrib, secrets map[string]string) (string, string, string, string, string, string, []string, error) {
 	rgName, accountName, containerName, secretNamespace, _, err := GetContainerInfo(volumeID)
 	if err != nil {
 		// ignore volumeID parsing error
@@ -453,7 +453,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 
 	if protocol == NFS {
 		// nfs protocol does not need account key, return directly
-		return rgName, accountName, accountKey, containerName, authEnv, err
+		return rgName, accountName, accountKey, containerName, secretName, secretNamespace, authEnv, err
 	}
 
 	if secretNamespace == "" {
@@ -474,7 +474,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 	if keyVaultURL != "" {
 		key, err := d.getKeyVaultSecretContent(ctx, keyVaultURL, keyVaultSecretName, keyVaultSecretVersion)
 		if err != nil {
-			return rgName, accountName, accountKey, containerName, authEnv, err
+			return rgName, accountName, accountKey, containerName, secretName, secretNamespace, authEnv, err
 		}
 		if isSASToken(key) {
 			accountSasToken = key
@@ -498,7 +498,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 						accountName, secretNamespace, secretName, err)
 					accountKey, err = d.cloud.GetStorageAccesskey(ctx, subsID, accountName, rgName)
 					if err != nil {
-						return rgName, accountName, accountKey, containerName, authEnv, fmt.Errorf("no key for storage account(%s) under resource group(%s), err %w", accountName, rgName, err)
+						return rgName, accountName, accountKey, containerName, secretName, secretNamespace, authEnv, fmt.Errorf("no key for storage account(%s) under resource group(%s), err %w", accountName, rgName, err)
 					}
 				}
 			}
@@ -548,7 +548,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 		authEnv = append(authEnv, "AZURE_STORAGE_SPN_CLIENT_SECRET="+storageSPNClientSecret)
 	}
 
-	return rgName, accountName, secretName, containerName, authEnv, err
+	return rgName, accountName, accountKey, containerName, secretName, secretNamespace, authEnv, err
 }
 
 // GetStorageAccountAndContainer get storage account and container info
