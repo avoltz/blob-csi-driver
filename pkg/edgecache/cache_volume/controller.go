@@ -333,7 +333,7 @@ func (c *Controller) createVolume(pv *v1.PersistentVolume, pvc *v1.PersistentVol
 	// Remove create volume annotation so lister stops queueing
 	var removeAnnotations = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
 		pvcClone := inpvc.DeepCopy()
-		pvcClone.ObjectMeta.Annotations = util.RemoveMapElements(pvcClone.ObjectMeta.Annotations, []string{createVolumeAnnotation})
+		delete(pvcClone.ObjectMeta.Annotations, createVolumeAnnotation)
 		return pvcClone
 	}
 	err := RetryUpdatePVC(c.client, pvc.Namespace, pvc.Name, removeAnnotations)

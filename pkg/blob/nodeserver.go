@@ -44,6 +44,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	maps "golang.org/x/exp/maps"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	mount_azure_blob "sigs.k8s.io/blob-csi-driver/pkg/blobfuse-proxy/pb"
@@ -370,7 +371,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 				"external/edgecache-account":       accountName,
 				"external/edgecache-container":     containerName,
 			}
-			pvcClone.ObjectMeta.Annotations = blobcsiutil.MergeMaps(pvcClone.ObjectMeta.Annotations, annotations)
+			maps.Copy(pvcClone.ObjectMeta.Annotations, annotations)
 			return pvcClone
 		}
 		err = cachevolume.RetryUpdatePVC(d.cloud.KubeClient, pv.Spec.ClaimRef.Namespace, pv.Spec.ClaimRef.Name, addAnnotations)

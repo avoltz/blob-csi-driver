@@ -193,35 +193,6 @@ func RemoveString(slice []string, s string, modifier func(s string) string) []st
 	return newSlice
 }
 
-// Will attempt to merge to maps into one new map
-func MergeMaps[M ~map[K]V, K comparable, V any](src ...M) M {
-	merged := make(M)
-	for _, m := range src {
-		for k, v := range m {
-			merged[k] = v
-		}
-	}
-	return merged
-}
-
-// Will give you a deep copy of the input map
-func CopyMap[K comparable, V any](m map[K]V) map[K]V {
-	result := make(map[K]V)
-	for k, v := range m {
-		result[k] = v
-	}
-	return result
-}
-
-// Will non-destructively remove elements from a given map
-func RemoveMapElements[M map[K]V, K comparable, V any](m map[K]V, elems []K) M {
-	cmap := CopyMap(m)
-	for _, e := range elems {
-		delete(cmap, e)
-	}
-	return cmap
-}
-
 type OsInfo struct {
 	Distro  string
 	Version string
