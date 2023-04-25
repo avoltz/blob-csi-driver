@@ -37,7 +37,7 @@ type Manager struct {
 }
 
 type ManagerInterface interface {
-	EnsureVolume(accountName string, accountKey string, containerName string, targetPath string) error
+	EnsureVolume(accountName string, accountKey string, containerName string) error
 	DeleteVolume(accountName string, containerName string) error
 	MountVolume(account string, container string, targetPath string) error
 	UnmountVolume(volumeID string, targetPath string) error
@@ -249,7 +249,7 @@ func (m *Manager) callWithConnection(fun ConnectionUsingFunc, endpoint string) e
 	return fun(conn)
 }
 
-func (m *Manager) EnsureVolume(accountName string, accountKey string, containerName string, targetPath string) error {
+func (m *Manager) EnsureVolume(accountName string, accountKey string, containerName string) error {
 	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
 		return createVolume(cache_volume_service.NewCacheVolumeClient(conn), accountName, accountKey, containerName)
 	}, m.configEndpoint)
