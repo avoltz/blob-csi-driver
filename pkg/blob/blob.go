@@ -547,7 +547,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 		authEnv = append(authEnv, "AZURE_STORAGE_SPN_CLIENT_SECRET="+storageSPNClientSecret)
 	}
 
-	return rgName, accountName, accountKey, containerName, authEnv, err
+	return rgName, accountName, secretName, containerName, authEnv, err
 }
 
 // GetStorageAccountAndContainer get storage account and container info
