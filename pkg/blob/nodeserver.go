@@ -339,6 +339,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		klog.V(3).Infof("edgecache attrib %v", attrib)
 		pvName, exists := attrib[pvNameKey]
 		var pv *v1.PersistentVolume
+		var err error
 		if exists {
 			pv, err = finalizer.GetPVByName(d.cloud.KubeClient, pvName)
 		} else {
@@ -359,9 +360,24 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 				}
 			}
 		}
-		if err = d.edgeCacheManager.EnsureVolume(accountName, accountKey, containerName, targetPath); err != nil {
+
+		// Pass this to RetryUpdatePVC to confidently add these annotations
+		var addAnnotations = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
+			pvcClone := inpvc.DeepCopy()
+			annotations := map[string]string{
+				"external/edgecache-create-volume": "yes",
+				"external/edgecache-secret-name":   keyName,
+				"external/edgecache-account":       accountName,
+				"external/edgecache-container":     containerName,
+			}
+			pvcClone.ObjectMeta.Annotations = blobcsiutil.MergeMaps(pvcClone.ObjectMeta.Annotations, annotations)
+			return pvcClone
+		}
+		err = finalizer.RetryUpdatePVC(d.cloud.KubeClient, pv.Spec.ClaimRef.Namespace, pv.Spec.ClaimRef.Name, addAnnotations)
+		if err != nil {
 			return nil, err
 		}
+
 		if err = d.edgeCacheManager.MountVolume(accountName, containerName, targetPath); err != nil {
 			return nil, err
 		}

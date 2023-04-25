@@ -46,6 +46,9 @@ const (
 	pvcProtectionFinalizer string = "kubernetes.io/pvc-protection"
 	accountAnnotation      string = "external/edgecache-account"
 	containerAnnotation    string = "external/edgecache-container"
+    createVolumeAnnotation string = "external/edgecache-create-volume"
+    secretNameAnnotation   string = "external/edgecache-secret-name"
+    secretKeyField         string = "azurestorageaccountkey"
 )
 
 // PVCModification is a type of function that modifies a PVC
@@ -265,8 +268,21 @@ func (c *Controller) processPVC(pvc *v1.PersistentVolumeClaim) error {
 		klog.Error(err)
 		return err
 	}
+
+	// if PVC has create volume annotation
+	_, createVolume := pvc.ObjectMeta.Annotations[createVolumeAnnotation]
+	if createVolume {
+		klog.V(3).Infof("Running create volume for PV %s", pvName)
+		if err := c.createVolume(pv, pvc); err != nil {
+			klog.Error(err)
+			return err
+		}
+		return nil
+	}
+
 	// ignore pvs not using edgecache or which do not have the finalizer
 	if !util.ContainsString(pv.GetFinalizers(), finalizerName, nil) {
+		klog.V(3).Infof("does not have finalizers %v", pvc.Annotations)
 		return nil
 	}
 	// wait for the PVC to be deleted before cleaning up the volume
@@ -274,14 +290,14 @@ func (c *Controller) processPVC(pvc *v1.PersistentVolumeClaim) error {
 		klog.V(3).Infof("PVC is not being deleted, ignoring")
 		return nil
 	}
-	// We always add the finalizer from node plugin so might as well use an annotation here!
-	err = c.ecManager.DeleteVolume(pv.ObjectMeta.Annotations[accountAnnotation], pv.ObjectMeta.Annotations[containerAnnotation])
+
+	// volume is ready to be deleted
+	err = c.deleteVolume(pv, pvc)
 	if err != nil {
 		return err
 	}
-	klog.V(2).Infof("edgecache volume deleted, removing finalizer")
-	// edgecache delete success, remove the finalizer
-	return RemoveFinalizer(c.client, pv, pvc)
+
+	return nil
 }
 
 func (c *Controller) pvcUpdated(a interface{}, b interface{}) {
@@ -290,8 +306,17 @@ func (c *Controller) pvcUpdated(a interface{}, b interface{}) {
 		utilruntime.HandleError(fmt.Errorf("PVC informer returned non-PVC object: %#v", b))
 		return
 	}
+
+	// if PVC has create volume annotation
+	_, createVolume := newpvc.ObjectMeta.Annotations[createVolumeAnnotation]
+	if createVolume {
+		c.queue.Add(newpvc)
+		return
+	}
+
 	// ignore pvcs not using edgecache or which already have no finalizer
 	if !util.ContainsString(newpvc.GetFinalizers(), finalizerName, nil) {
+		klog.V(3).Infof("does not have finalizers or create volume annotation %v", newpvc.Name)
 		return
 	}
 	// ignore any pvcs which still have attached pods
@@ -300,4 +325,69 @@ func (c *Controller) pvcUpdated(a interface{}, b interface{}) {
 	}
 
 	c.queue.Add(newpvc)
+}
+
+// Finalizes the PV/PVC and calls EnsureVolume
+func (c *Controller) createVolume(pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim) error {
+	// Remove create volume annotation so lister stops queueing
+	var removeAnnotations = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
+		pvcClone := inpvc.DeepCopy()
+		pvcClone.ObjectMeta.Annotations = util.RemoveMapElements(pvcClone.ObjectMeta.Annotations, []string{createVolumeAnnotation})
+		return pvcClone
+	}
+	err := RetryUpdatePVC(c.client, pvc.Namespace, pvc.Name, removeAnnotations)
+	if err != nil {
+		klog.Error(err)
+		return err
+	}
+
+	// Get volume attributes
+	accountName, accountNameOk := pvc.ObjectMeta.Annotations[accountAnnotation]
+	containerName, containerNameOk := pvc.ObjectMeta.Annotations[containerAnnotation]
+	if !accountNameOk || !containerNameOk {
+		klog.Errorf("Account or Container annotation missing from PVC %s", pvc.Name)
+		return nil
+	}
+
+	// Finalize PV and PVC
+	if err := AddFinalizer(c.client, pv, accountName, containerName); err != nil {
+		klog.Error(err)
+		return err
+	}
+
+	// Get storage account secret
+	accountSecretName := pvc.ObjectMeta.Annotations[secretNameAnnotation]
+	accountSecret, err := c.client.CoreV1().Secrets("default").Get(context.Background(), accountSecretName, metav1.GetOptions{})
+	if err != nil {
+		klog.Error(err)
+		return err
+	}
+	accountKey := string(accountSecret.Data[secretKeyField])
+
+	klog.V(3).Infof("Calling EnsureVolume with acctName %s, acctKey %s, contName %s", accountName, accountKey, containerName)
+	// Create the Volume
+	if err := c.ecManager.EnsureVolume(accountName, accountKey, containerName); err != nil {
+		klog.Error(err)
+		return err
+	}
+
+	klog.V(3).Infof("createVolume successfully created volume and add finalizers!")
+	return nil
+}
+
+// Calls DeleteVolume and removes finalizers from the PV/PVC
+func (c *Controller) deleteVolume(pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim) error {
+	// We always add the finalizer from node plugin so might as well use an annotation here!
+	if err := c.ecManager.DeleteVolume(pv.ObjectMeta.Annotations[accountAnnotation], pv.ObjectMeta.Annotations[containerAnnotation]); err != nil {
+		return err
+	}
+	klog.V(2).Infof("edgecache volume deleted, removing finalizer")
+	// edgecache delete success, remove the finalizer
+	if err := RemoveFinalizer(c.client, pv, pvc); err != nil {
+		klog.Error("RemoveFinalizer failed")
+		return err
+	}
+
+	klog.V(2).Infof("deleteVolume successfully removed finalizer and cleaned up volume")
+	return nil
 }
