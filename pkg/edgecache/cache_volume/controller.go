@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package finalizer
+package cachevolume
 
 import (
 	"context"
@@ -167,18 +167,18 @@ type Controller struct {
 	ecManager edgecache.ManagerInterface
 }
 
-// NewEdgeCacheFinalizerController returns a new *Controller.
-func NewEdgeCacheFinalizerController(manager edgecache.ManagerInterface, pvcInformer coreinformers.PersistentVolumeClaimInformer, client clientset.Interface) *Controller {
+// NewEdgeCacheCVController returns a new *Controller.
+func NewEdgeCacheCVController(manager edgecache.ManagerInterface, pvcInformer coreinformers.PersistentVolumeClaimInformer, client clientset.Interface) *Controller {
 	c := &Controller{
 		client: client,
-		queue:  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "edgecachefinalizer"),
+		queue:  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "edgecachecvcontroller"),
 	}
 	if client == nil {
-		klog.Error("edgecache finalizer requires client")
+		klog.Error("edgecache cv controller requires client")
 		return nil
 	}
 	if manager == nil {
-		klog.Error("edgecache finalizer requires edgecache manager")
+		klog.Error("edgecache cv controller requires edgecache manager")
 		return nil
 	}
 
@@ -197,9 +197,9 @@ func NewEdgeCacheFinalizerController(manager edgecache.ManagerInterface, pvcInfo
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartLogging(klog.Infof)
 	broadcaster.StartRecordingToSink(&corev1.EventSinkImpl{Interface: client.CoreV1().Events(v1.NamespaceAll)})
-	c.eventRecorder = broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "edgecachefinalizer"})
+	c.eventRecorder = broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "edgecachecvcontroller"})
 
-	klog.V(3).Infof("NewEdgecacheFinalizerController: complete")
+	klog.V(3).Infof("NewEdgecacheCVController: complete")
 	return c
 }
 
@@ -208,14 +208,14 @@ func (c *Controller) Run(ctx context.Context, workers int) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
-	klog.V(3).Infof("Starting edgecache finalizer controller")
-	defer klog.V(3).Infof("Shutting down edgecache finalizer controller")
+	klog.V(3).Infof("Starting edgecachecv controller")
+	defer klog.V(3).Infof("Shutting down edgecachecv controller")
 
-	if !cache.WaitForNamedCacheSync("edgecachefinalizer", ctx.Done(), c.pvcListerSynced) {
+	if !cache.WaitForNamedCacheSync("edgecachecvcontroller", ctx.Done(), c.pvcListerSynced) {
 		return
 	}
 
-	klog.V(3).Infof("edgecache finalizer controller waiting on workers")
+	klog.V(3).Infof("edgecache cv controller waiting on workers")
 	for i := 0; i < workers; i++ {
 		go wait.UntilWithContext(ctx, c.runWorker, time.Second)
 	}
@@ -225,7 +225,7 @@ func (c *Controller) Run(ctx context.Context, workers int) {
 
 func (c *Controller) runWorker(ctx context.Context) {
 	for c.processNextWorkItem(ctx) {
-		klog.V(3).Info("edgecache finalizer controller processed next item")
+		klog.V(3).Info("edgecache cv controller processed next item")
 	}
 }
 
@@ -251,6 +251,7 @@ func (c *Controller) processNextWorkItem(ctx context.Context) bool {
 	return true
 }
 
+// processPVC is called on newly added pvcs to the queue
 func (c *Controller) processPVC(pvc *v1.PersistentVolumeClaim) error {
 	pvName := pvc.Spec.VolumeName
 	klog.V(3).Infof("Processing PVC %s:%s for PV %s", pvc.Namespace, pvc.Name, pvName)

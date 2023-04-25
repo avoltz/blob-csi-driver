@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package finalizer
+package cachevolume
 
 import (
 	"context"
@@ -61,7 +61,7 @@ func NewFakeFinalizer(client *fake.Clientset, mgr *mock_manager.MockManagerInter
 	}
 	informers := informers.NewSharedInformerFactory(client, 0)
 	pvcInformer := informers.Core().V1().PersistentVolumeClaims()
-	return NewEdgeCacheFinalizerController(mgr, pvcInformer, client), informers
+	return NewEdgeCacheCVController(mgr, pvcInformer, client), informers
 }
 
 func TestFinalizerRequires(t *testing.T) {
@@ -70,10 +70,10 @@ func TestFinalizerRequires(t *testing.T) {
 	informers := informers.NewSharedInformerFactory(client, 0)
 	pvcInformer := informers.Core().V1().PersistentVolumeClaims()
 	t.Run("KubeClient", func(t *testing.T) {
-		assert.Nil(t, NewEdgeCacheFinalizerController(mgr, pvcInformer, nil))
+		assert.Nil(t, NewEdgeCacheCVController(mgr, pvcInformer, nil))
 	})
 	t.Run("EdgeCacheManager", func(t *testing.T) {
-		assert.Nil(t, NewEdgeCacheFinalizerController(nil, pvcInformer, client))
+		assert.Nil(t, NewEdgeCacheCVController(nil, pvcInformer, client))
 	})
 }
 

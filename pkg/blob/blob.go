@@ -42,7 +42,7 @@ import (
 
 	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
-	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/finalizer"
+	cachevolume "sigs.k8s.io/blob-csi-driver/pkg/edgecache/cache_volume"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
@@ -272,10 +272,10 @@ func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
 	// When NodeID is empty, the plugin runs as controller
 	// We do not need to run the finalizer on every node, so run with controllers
 	if d.NodeID == "" && d.enableEdgeCacheFinalizer {
-		// The controller pod can run a custom controller to watch finalizers
-		klog.V(3).Info("Starting edgecache finalizer")
+		// The controller pod can run a custom controller to manage cache volumes
+		klog.V(3).Info("Starting edgecache cv controller")
 		factory := informers.NewSharedInformerFactory(d.cloud.KubeClient, 1*time.Minute)
-		c := finalizer.NewEdgeCacheFinalizerController(d.edgeCacheManager, factory.Core().V1().PersistentVolumeClaims(), d.cloud.KubeClient)
+		c := cachevolume.NewEdgeCacheCVController(d.edgeCacheManager, factory.Core().V1().PersistentVolumeClaims(), d.cloud.KubeClient)
 		ctx := context.Background()
 		factory.Start(ctx.Done())
 		go c.Run(ctx, 5)
