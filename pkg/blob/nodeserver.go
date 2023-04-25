@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
-	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/cache_volume"
 	blobcsiutil "sigs.k8s.io/blob-csi-driver/pkg/util"
 
 	"github.com/Azure/azure-sdk-for-go/storage"
@@ -342,9 +341,9 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		var pv *v1.PersistentVolume
 		var err error
 		if exists {
-			pv, err = cachevolume.GetPVByName(d.cloud.KubeClient, pvName)
+			pv, err = blobcsiutil.GetPVByName(d.cloud.KubeClient, pvName)
 		} else {
-			pv, err = cachevolume.GetPVByVolumeID(d.cloud.KubeClient, volumeID)
+			pv, err = blobcsiutil.GetPVByVolumeID(d.cloud.KubeClient, volumeID)
 		}
 		if err != nil {
 			return nil, err
@@ -374,7 +373,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			maps.Copy(pvcClone.ObjectMeta.Annotations, annotations)
 			return pvcClone
 		}
-		err = cachevolume.RetryUpdatePVC(d.cloud.KubeClient, pv.Spec.ClaimRef.Namespace, pv.Spec.ClaimRef.Name, addAnnotations)
+		err = blobcsiutil.RetryUpdatePVC(d.cloud.KubeClient, pv.Spec.ClaimRef.Namespace, pv.Spec.ClaimRef.Name, addAnnotations)
 		if err != nil {
 			return nil, err
 		}
