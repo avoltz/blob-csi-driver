@@ -256,14 +256,15 @@ func (c *Controller) createVolume(pv *v1.PersistentVolume, pvc *v1.PersistentVol
 
 	// Get storage account secret
 	accountSecretName := pvc.ObjectMeta.Annotations[secretNameAnnotation]
-	accountSecret, err := c.client.CoreV1().Secrets("default").Get(context.Background(), accountSecretName, metav1.GetOptions{})
+	accountSecretNamespace := pvc.ObjectMeta.Annotations[secretNamespaceAnnotation]
+	accountSecret, err := c.client.CoreV1().Secrets(accountSecretNamespace).Get(context.Background(), accountSecretName, metav1.GetOptions{})
 	if err != nil {
 		klog.Error(err)
 		return err
 	}
 	accountKey := string(accountSecret.Data[secretKeyField])
 
-	klog.V(3).Infof("Calling EnsureVolume with acctName %s, acctKey %s, contName %s", accountName, accountKey, containerName)
+	klog.V(3).Infof("Calling EnsureVolume with acctName %s, contName %s", accountName, containerName)
 	// Create the Volume
 	if err := c.ecManager.EnsureVolume(accountName, accountKey, containerName); err != nil {
 		klog.Error(err)

@@ -350,14 +350,12 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		}
 
 		// attempt to figure out the name of the kube secret for the storage account key
-		if keyName == "" { // if the keyName wasn't already figured out by 'GetAuthEnv'
-			keyName, exists = attrib["secretName"]
-			if !exists { // if the keyName doesn't exist in the volume source context
-				keyName, exists = pv.ObjectMeta.Annotations[provisionerSecretNameField]
-				if !exists { // if keyName doesn't exist in the PV annotations
-					klog.Errorf("Failed to discover storage account key name.")
-					return nil, fmt.Errorf("Failed to discover storage account key name.")
-				}
+		if len(secretName) == 0 { // if the keyName wasn't already figured out by 'GetAuthEnv'
+			secretName, exists = pv.ObjectMeta.Annotations[provisionerSecretNameField]
+			secretNamespace = pv.ObjectMeta.Annotations[provisionerSecretNamespaceField]
+			if !exists { // if keyName doesn't exist in the PV annotations
+				klog.Errorf("Failed to discover storage account key name.")
+				return nil, fmt.Errorf("failed to discover storage account key name")
 			}
 		}
 
@@ -365,10 +363,11 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		var addAnnotations = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
 			pvcClone := inpvc.DeepCopy()
 			annotations := map[string]string{
-				"external/edgecache-create-volume": "yes",
-				"external/edgecache-secret-name":   keyName,
-				"external/edgecache-account":       accountName,
-				"external/edgecache-container":     containerName,
+				"external/edgecache-create-volume":    "yes",
+				"external/edgecache-secret-name":      secretName,
+				"external/edgecache-secret-namespace": secretNamespace,
+				"external/edgecache-account":          accountName,
+				"external/edgecache-container":        containerName,
 			}
 			maps.Copy(pvcClone.ObjectMeta.Annotations, annotations)
 			return pvcClone
