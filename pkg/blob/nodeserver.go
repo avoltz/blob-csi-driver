@@ -347,9 +347,17 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		if err != nil {
 			return nil, err
 		}
-		err = finalizer.AddFinalizer(d.cloud.KubeClient, pv, accountName, containerName)
-		if err != nil {
-			return nil, err
+
+		// attempt to figure out the name of the kube secret for the storage account key
+		if keyName == "" { // if the keyName wasn't already figured out by 'GetAuthEnv'
+			keyName, exists = attrib["secretName"]
+			if !exists { // if the keyName doesn't exist in the volume source context
+				keyName, exists = pv.ObjectMeta.Annotations[provisionerSecretNameField]
+				if !exists { // if keyName doesn't exist in the PV annotations
+					klog.Errorf("Failed to discover storage account key name.")
+					return nil, fmt.Errorf("Failed to discover storage account key name.")
+				}
+			}
 		}
 		if err = d.edgeCacheManager.EnsureVolume(accountName, accountKey, containerName, targetPath); err != nil {
 			return nil, err
