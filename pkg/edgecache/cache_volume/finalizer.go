@@ -34,19 +34,18 @@ func AddFinalizer(client clientset.Interface, pv *v1.PersistentVolume, storageAc
 		return nil
 	}
 	var addFinalizers = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
-		if !util.ContainsString(inpvc.GetFinalizers(), finalizerName, nil) {
-			pvcClone := inpvc.DeepCopy()
+		pvcClone := inpvc.DeepCopy()
+		if !util.ContainsString(pvcClone.GetFinalizers(), finalizerName, nil) {
 			pvcClone.ObjectMeta.Finalizers = append(pvcClone.ObjectMeta.Finalizers, finalizerName)
-			return pvcClone
 		}
-		return inpvc
+		return pvcClone
 	}
-	namespace := pv.Spec.ClaimRef.Namespace
-	err := RetryUpdatePVC(client, namespace, pv.Spec.ClaimRef.Name, addFinalizers)
+	err := RetryUpdatePVC(client, pv.Spec.ClaimRef.Namespace, pv.Spec.ClaimRef.Name, addFinalizers)
 	if err != nil {
 		klog.Errorf("Unable to addFinalizers to pvc %s", pv.Spec.ClaimRef.Name)
 		return err
 	}
+	klog.V(3).Infof("Updated pvc: %s with finalizer %s", pv.Spec.ClaimRef.Name, finalizerName)
 
 	/* finally, update pv */
 	var addFinalizersAndAnnotations = func(inpv *v1.PersistentVolume) *v1.PersistentVolume {
@@ -61,7 +60,7 @@ func AddFinalizer(client clientset.Interface, pv *v1.PersistentVolume, storageAc
 		klog.Errorf("unable to add protection finalizer and annotations to PV %s: %v", pv.Name, err)
 		return err
 	}
-	klog.V(3).Infof("AddFinalizer: updated PV %s", pv.Name)
+	klog.V(3).Infof("Updated pv: %s with finalizer %s", pv.Name, finalizerName)
 	return nil
 }
 
@@ -72,15 +71,14 @@ func RemoveFinalizer(client clientset.Interface, pv *v1.PersistentVolume, pvc *v
 		return pvcClone
 	}
 	if util.ContainsString(pvc.GetFinalizers(), finalizerName, nil) {
-		klog.V(3).Infof("Removing protection finalizer from PVC %s", pvc.Name)
 		err := RetryUpdatePVC(client, pvc.Namespace, pvc.Name, removePVCFinalizers)
 		if err != nil {
 			klog.Errorf("Unable to remove protection finalizer to PVC %s: %v", pvc.Name, err)
 			return err
 		}
+		klog.V(3).Infof("Removed finalizer %s, from PVC %s", finalizerName, pvc.Name)
 	}
 
-	klog.V(3).Infof("Removing protection finalizer from PV %s", pv.Name)
 	if !util.ContainsString(pv.GetFinalizers(), finalizerName, nil) {
 		return nil
 	}
@@ -95,7 +93,7 @@ func RemoveFinalizer(client clientset.Interface, pv *v1.PersistentVolume, pvc *v
 		klog.Errorf("unable to remove protection finalizer from PV %s: %v", pv.Name, err)
 		return err
 	}
+	klog.V(3).Infof("Removed finalizer %s from PV %s", finalizerName, pv.Name)
 
-	klog.V(3).Infof("RemoveFinalizer updated PV %s", pv.Name)
 	return nil
 }

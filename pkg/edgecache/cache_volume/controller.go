@@ -172,7 +172,7 @@ func (c *Controller) processPVC(pvc *v1.PersistentVolumeClaim) error {
 	_, createVolume := pvc.ObjectMeta.Annotations[createVolumeAnnotation]
 	if createVolume {
 		klog.V(3).Infof("Running create volume for PV %s", pvName)
-		if err := c.createVolume(pv, pvc); err != nil {
+		if err := c.finalizeAndCreateVolume(pv, pvc); err != nil {
 			klog.Error(err)
 			return err
 		}
@@ -191,7 +191,7 @@ func (c *Controller) processPVC(pvc *v1.PersistentVolumeClaim) error {
 	}
 
 	// volume is ready to be deleted
-	err = c.deleteVolume(pv, pvc)
+	err = c.deleteAndDefinalizeVolume(pv, pvc)
 	if err != nil {
 		return err
 	}
@@ -215,7 +215,6 @@ func (c *Controller) pvcUpdated(a interface{}, b interface{}) {
 
 	// ignore pvcs not using edgecache or which already have no finalizer
 	if !util.ContainsString(newpvc.GetFinalizers(), finalizerName, nil) {
-		klog.V(3).Infof("does not have finalizers or create volume annotation %v", newpvc.Name)
 		return
 	}
 	// ignore any pvcs which still have attached pods
@@ -227,7 +226,7 @@ func (c *Controller) pvcUpdated(a interface{}, b interface{}) {
 }
 
 // Finalizes the PV/PVC and calls EnsureVolume
-func (c *Controller) createVolume(pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim) error {
+func (c *Controller) finalizeAndCreateVolume(pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim) error {
 	// Remove create volume annotation so lister stops queueing
 	var removeAnnotations = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
 		pvcClone := inpvc.DeepCopy()
@@ -276,7 +275,7 @@ func (c *Controller) createVolume(pv *v1.PersistentVolume, pvc *v1.PersistentVol
 }
 
 // Calls DeleteVolume and removes finalizers from the PV/PVC
-func (c *Controller) deleteVolume(pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim) error {
+func (c *Controller) deleteAndDefinalizeVolume(pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim) error {
 	// We always add the finalizer from node plugin so might as well use an annotation here!
 	if err := c.ecManager.DeleteVolume(pv.ObjectMeta.Annotations[accountAnnotation], pv.ObjectMeta.Annotations[containerAnnotation]); err != nil {
 		return err
