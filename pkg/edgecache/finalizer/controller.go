@@ -46,6 +46,40 @@ const (
 	containerAnnotation    string = "external/edgecache-container"
 )
 
+
+func GetPVByVolumeID(client clientset.Interface, volumeID string) (*v1.PersistentVolume, error) {
+	klog.V(3).Infof("No pvName provided, looking up via volumeID: %s", volumeID)
+	pvList, err := client.CoreV1().PersistentVolumes().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		klog.Errorf("unable to list volumes via volumeID: %s", volumeID)
+		return nil, err
+	}
+	for _, pv := range pvList.Items {
+		if pv.Spec.CSI.VolumeHandle == volumeID {
+			return &pv, nil
+		}
+	}
+	return nil, errors.New("no pv found")
+}
+
+func GetPVByName(client clientset.Interface, pvName string) (*v1.PersistentVolume, error) {
+	pv, err := client.CoreV1().PersistentVolumes().Get(context.TODO(), pvName, metav1.GetOptions{})
+	if err != nil {
+		klog.Errorf("unable to get PV %s", pvName)
+		return nil, err
+	}
+	return pv, nil
+}
+
+func GetPVCByName(client clientset.Interface, namespace string, pvcName string) (*v1.PersistentVolumeClaim, error) {
+	pvc, err := client.CoreV1().PersistentVolumeClaims(namespace).Get(context.TODO(), pvcName, metav1.GetOptions{})
+	if err != nil {
+		klog.Errorf("unable to get PVC %s", pvcName)
+		return nil, err
+	}
+	return pvc, nil
+}
+
 // Controller is controller that removes PVProtectionFinalizer
 // from PVs that are not bound to PVCs.
 type Controller struct {

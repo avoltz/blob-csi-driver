@@ -27,30 +27,6 @@ import (
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 )
 
-func GetPVByVolumeID(client clientset.Interface, volumeID string) (*v1.PersistentVolume, error) {
-	klog.V(3).Infof("No pvName provided, looking up via volumeID: %s", volumeID)
-	pvList, err := client.CoreV1().PersistentVolumes().List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		klog.Errorf("unable to list volumes via volumeID: %s", volumeID)
-		return nil, err
-	}
-	for _, pv := range pvList.Items {
-		if pv.Spec.CSI.VolumeHandle == volumeID {
-			return &pv, nil
-		}
-	}
-	return nil, errors.New("no pv found")
-}
-
-func GetPVByName(client clientset.Interface, pvName string) (*v1.PersistentVolume, error) {
-	pv, err := client.CoreV1().PersistentVolumes().Get(context.TODO(), pvName, metav1.GetOptions{})
-	if err != nil {
-		klog.Errorf("unable to get PV %s", pvName)
-		return nil, err
-	}
-	return pv, nil
-}
-
 func AddFinalizer(client clientset.Interface, pv *v1.PersistentVolume, storageAccount string, containerName string) error {
 	/* add to claim first, then pv
 	We need on claim for dynamic pvc. deleting a pvc will trigger deleteVolume which then will delete az container
