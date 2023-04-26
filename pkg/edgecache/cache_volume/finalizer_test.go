@@ -70,45 +70,6 @@ func pv() *v1.PersistentVolume {
 	}
 }
 
-func TestGetPVByVolumeID(t *testing.T) {
-	t.Run("ListFail", func(t *testing.T) {
-		client := fake.NewSimpleClientset()
-		client.PrependReactor("list", "persistentvolumes", func(action kubetesting.Action) (bool, runtime.Object, error) {
-			return true, nil, errors.New("error")
-		})
-		pv, err := GetPVByVolumeID(client, defaultVolumeID)
-		assert.Nil(t, pv)
-		assert.NotNil(t, err)
-	})
-	t.Run("NoneFound", func(t *testing.T) {
-		client := fake.NewSimpleClientset()
-		pv, err := GetPVByVolumeID(client, defaultVolumeID)
-		assert.Nil(t, pv)
-		assert.NotNil(t, err)
-	})
-	t.Run("MatchFound", func(t *testing.T) {
-		client := fake.NewSimpleClientset(pv())
-		pv, err := GetPVByVolumeID(client, defaultVolumeID)
-		assert.NotNil(t, pv)
-		assert.Nil(t, err)
-	})
-}
-
-func TestGetPVByName(t *testing.T) {
-	t.Run("NoneFound", func(t *testing.T) {
-		client := fake.NewSimpleClientset(pv())
-		pv, err := GetPVByName(client, "other")
-		assert.Nil(t, pv)
-		assert.NotNil(t, err)
-	})
-	t.Run("Found", func(t *testing.T) {
-		client := fake.NewSimpleClientset(pv())
-		pv, err := GetPVByName(client, defaultPVName)
-		assert.NotNil(t, pv)
-		assert.Nil(t, err)
-	})
-}
-
 func TestAddFinalizer(t *testing.T) {
 	t.Run("AlreadyFinalized", func(t *testing.T) {
 		pv1 := pv()
