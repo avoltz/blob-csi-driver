@@ -36,10 +36,6 @@ func conflictError(action kubetesting.Action) (bool, runtime.Object, error) {
 	return true, nil, conflictError
 }
 
-func noConflictError(action kubetesting.Action) (bool, runtime.Object, error) {
-	return false, nil, nil
-}
-
 func TestGetPVByVolumeID(t *testing.T) {
 	t.Run("ListFail", func(t *testing.T) {
 		client := fake.NewSimpleClientset()
@@ -123,7 +119,7 @@ func TestRetryUpdatePV(t *testing.T) {
 		}
 		err := RetryUpdatePV(client, defaultPVName, lamfn)
 		assert.Nil(t, err)
-		afterPV, err := client.CoreV1().PersistentVolumes().Get(context.TODO(), defaultPVName, metav1.GetOptions{})
+		afterPV, _ := client.CoreV1().PersistentVolumes().Get(context.TODO(), defaultPVName, metav1.GetOptions{})
 		assert.Equal(t, []string{"hello"}, afterPV.GetFinalizers())
 	})
 }
@@ -157,7 +153,7 @@ func TestRetryUpdatePVC(t *testing.T) {
 		}
 		err := RetryUpdatePVC(client, defaultPVCNamespace, defaultPVCName, lamfn)
 		assert.Nil(t, err)
-		afterPVC, err := client.CoreV1().PersistentVolumeClaims(defaultPVCNamespace).Get(context.TODO(), defaultPVCName, metav1.GetOptions{})
+		afterPVC, _ := client.CoreV1().PersistentVolumeClaims(defaultPVCNamespace).Get(context.TODO(), defaultPVCName, metav1.GetOptions{})
 		assert.Equal(t, []string{"hello"}, afterPVC.GetFinalizers())
 	})
 }

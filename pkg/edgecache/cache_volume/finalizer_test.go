@@ -48,6 +48,9 @@ func pvc() *v1.PersistentVolumeClaim {
 			Finalizers:  []string{},
 			Annotations: make(map[string]string),
 		},
+		Spec: v1.PersistentVolumeClaimSpec{
+			VolumeName: defaultPVName,
+		},
 	}
 }
 
