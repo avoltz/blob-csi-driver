@@ -174,7 +174,7 @@ func TestRemoveFinalizer(t *testing.T) {
 		pvcAfter, _ := client.CoreV1().PersistentVolumeClaims(defaultPVCNamespace).Get(context.TODO(), defaultPVCName, metav1.GetOptions{})
 		pvAfter, _ := client.CoreV1().PersistentVolumes().Get(context.TODO(), defaultPVName, metav1.GetOptions{})
 		assert.Equal(t, pvcAfter.GetFinalizers(), finalizersBefore)
-		assert.Equal(t, pvAfter.GetFinalizers(), finalizersBefore)
+		assert.Equal(t, pvAfter.GetFinalizers(), expectedFinalizers)
 	})
 	t.Run("PVUpdateFail", func(t *testing.T) {
 		pvc1 := pvc()
@@ -187,7 +187,7 @@ func TestRemoveFinalizer(t *testing.T) {
 		assert.NotNil(t, err)
 		pvcAfter, _ := client.CoreV1().PersistentVolumeClaims(defaultPVCNamespace).Get(context.TODO(), defaultPVCName, metav1.GetOptions{})
 		pvAfter, _ := client.CoreV1().PersistentVolumes().Get(context.TODO(), defaultPVName, metav1.GetOptions{})
-		assert.Equal(t, pvcAfter.GetFinalizers(), expectedFinalizers)
+		assert.Equal(t, pvcAfter.GetFinalizers(), finalizersBefore)
 		assert.Equal(t, pvAfter.GetFinalizers(), finalizersBefore)
 	})
 	t.Run("BothRemoved", func(t *testing.T) {

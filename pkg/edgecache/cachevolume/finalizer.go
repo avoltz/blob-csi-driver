@@ -65,12 +65,26 @@ func AddFinalizer(client clientset.Interface, pv *v1.PersistentVolume, storageAc
 }
 
 func RemoveFinalizer(client clientset.Interface, pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim) error {
-	var removePVCFinalizers = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
-		pvcClone := inpvc.DeepCopy()
-		pvcClone.ObjectMeta.Finalizers = util.RemoveString(pvcClone.ObjectMeta.Finalizers, finalizerName, nil)
-		return pvcClone
+	if util.ContainsString(pv.GetFinalizers(), finalizerName, nil) {
+		var removePVFinalizers = func(inpv *v1.PersistentVolume) *v1.PersistentVolume {
+			pvClone := inpv.DeepCopy()
+			pvClone.ObjectMeta.Finalizers = util.RemoveString(pvClone.ObjectMeta.Finalizers, finalizerName, nil)
+			return pvClone
+		}
+		err := RetryUpdatePV(client, pv.Name, removePVFinalizers)
+		if err != nil {
+			klog.Errorf("unable to remove protection finalizer from PV %s: %v", pv.Name, err)
+			return err
+		}
+		klog.V(3).Infof("Removed finalizer %s from PV %s", finalizerName, pv.Name)
 	}
+
 	if util.ContainsString(pvc.GetFinalizers(), finalizerName, nil) {
+		var removePVCFinalizers = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
+			pvcClone := inpvc.DeepCopy()
+			pvcClone.ObjectMeta.Finalizers = util.RemoveString(pvcClone.ObjectMeta.Finalizers, finalizerName, nil)
+			return pvcClone
+		}
 		err := RetryUpdatePVC(client, pvc.Namespace, pvc.Name, removePVCFinalizers)
 		if err != nil {
 			klog.Errorf("Unable to remove protection finalizer to PVC %s: %v", pvc.Name, err)
@@ -78,22 +92,6 @@ func RemoveFinalizer(client clientset.Interface, pv *v1.PersistentVolume, pvc *v
 		}
 		klog.V(3).Infof("Removed finalizer %s, from PVC %s", finalizerName, pvc.Name)
 	}
-
-	if !util.ContainsString(pv.GetFinalizers(), finalizerName, nil) {
-		return nil
-	}
-
-	var removePVFinalizers = func(inpv *v1.PersistentVolume) *v1.PersistentVolume {
-		pvClone := pv.DeepCopy()
-		pvClone.ObjectMeta.Finalizers = util.RemoveString(pvClone.ObjectMeta.Finalizers, finalizerName, nil)
-		return pvClone
-	}
-	err := RetryUpdatePV(client, pv.Name, removePVFinalizers)
-	if err != nil {
-		klog.Errorf("unable to remove protection finalizer from PV %s: %v", pv.Name, err)
-		return err
-	}
-	klog.V(3).Infof("Removed finalizer %s from PV %s", finalizerName, pv.Name)
 
 	return nil
 }
