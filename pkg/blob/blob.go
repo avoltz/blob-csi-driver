@@ -42,7 +42,7 @@ import (
 
 	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
-	cachevolume "sigs.k8s.io/blob-csi-driver/pkg/edgecache/cache_volume"
+	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/cachevolume"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
