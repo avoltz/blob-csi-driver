@@ -59,15 +59,6 @@ func GetPVByName(client clientset.Interface, pvName string) (*v1.PersistentVolum
 	return pv, nil
 }
 
-func GetPVCByName(client clientset.Interface, namespace string, pvcName string) (*v1.PersistentVolumeClaim, error) {
-	pvc, err := client.CoreV1().PersistentVolumeClaims(namespace).Get(context.TODO(), pvcName, metav1.GetOptions{})
-	if err != nil {
-		klog.Errorf("unable to get PVC %s", pvcName)
-		return nil, err
-	}
-	return pvc, nil
-}
-
 var CustomRetry = wait.Backoff{
 	Steps:    5,
 	Duration: 10 * time.Millisecond,
