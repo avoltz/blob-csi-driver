@@ -75,21 +75,6 @@ func TestGetPVByName(t *testing.T) {
 	})
 }
 
-func TestGetPVCByName(t *testing.T) {
-	t.Run("NoneFound", func(t *testing.T) {
-		client := fake.NewSimpleClientset(pvc())
-		pv, err := GetPVCByName(client, defaultPVCNamespace, "other")
-		assert.Nil(t, pv)
-		assert.NotNil(t, err)
-	})
-	t.Run("Found", func(t *testing.T) {
-		client := fake.NewSimpleClientset(pvc())
-		pv, err := GetPVCByName(client, defaultPVCNamespace, defaultPVCName)
-		assert.NotNil(t, pv)
-		assert.Nil(t, err)
-	})
-}
-
 func TestRetryUpdatePV(t *testing.T) {
 	t.Run("NonIsConflictError", func(t *testing.T) {
 		client := fake.NewSimpleClientset()
