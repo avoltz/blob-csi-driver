@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package finalizer
+package cachevolume
 
 import (
 	"context"
@@ -48,6 +48,9 @@ func pvc() *v1.PersistentVolumeClaim {
 			Finalizers:  []string{},
 			Annotations: make(map[string]string),
 		},
+		Spec: v1.PersistentVolumeClaimSpec{
+			VolumeName: defaultPVName,
+		},
 	}
 }
 
@@ -68,45 +71,6 @@ func pv() *v1.PersistentVolume {
 			},
 		},
 	}
-}
-
-func TestGetPVByVolumeID(t *testing.T) {
-	t.Run("ListFail", func(t *testing.T) {
-		client := fake.NewSimpleClientset()
-		client.PrependReactor("list", "persistentvolumes", func(action kubetesting.Action) (bool, runtime.Object, error) {
-			return true, nil, errors.New("error")
-		})
-		pv, err := GetPVByVolumeID(client, defaultVolumeID)
-		assert.Nil(t, pv)
-		assert.NotNil(t, err)
-	})
-	t.Run("NoneFound", func(t *testing.T) {
-		client := fake.NewSimpleClientset()
-		pv, err := GetPVByVolumeID(client, defaultVolumeID)
-		assert.Nil(t, pv)
-		assert.NotNil(t, err)
-	})
-	t.Run("MatchFound", func(t *testing.T) {
-		client := fake.NewSimpleClientset(pv())
-		pv, err := GetPVByVolumeID(client, defaultVolumeID)
-		assert.NotNil(t, pv)
-		assert.Nil(t, err)
-	})
-}
-
-func TestGetPVByName(t *testing.T) {
-	t.Run("NoneFound", func(t *testing.T) {
-		client := fake.NewSimpleClientset(pv())
-		pv, err := GetPVByName(client, "other")
-		assert.Nil(t, pv)
-		assert.NotNil(t, err)
-	})
-	t.Run("Found", func(t *testing.T) {
-		client := fake.NewSimpleClientset(pv())
-		pv, err := GetPVByName(client, defaultPVName)
-		assert.NotNil(t, pv)
-		assert.Nil(t, err)
-	})
 }
 
 func TestAddFinalizer(t *testing.T) {
@@ -210,7 +174,7 @@ func TestRemoveFinalizer(t *testing.T) {
 		pvcAfter, _ := client.CoreV1().PersistentVolumeClaims(defaultPVCNamespace).Get(context.TODO(), defaultPVCName, metav1.GetOptions{})
 		pvAfter, _ := client.CoreV1().PersistentVolumes().Get(context.TODO(), defaultPVName, metav1.GetOptions{})
 		assert.Equal(t, pvcAfter.GetFinalizers(), finalizersBefore)
-		assert.Equal(t, pvAfter.GetFinalizers(), finalizersBefore)
+		assert.Equal(t, pvAfter.GetFinalizers(), expectedFinalizers)
 	})
 	t.Run("PVUpdateFail", func(t *testing.T) {
 		pvc1 := pvc()
@@ -223,7 +187,7 @@ func TestRemoveFinalizer(t *testing.T) {
 		assert.NotNil(t, err)
 		pvcAfter, _ := client.CoreV1().PersistentVolumeClaims(defaultPVCNamespace).Get(context.TODO(), defaultPVCName, metav1.GetOptions{})
 		pvAfter, _ := client.CoreV1().PersistentVolumes().Get(context.TODO(), defaultPVName, metav1.GetOptions{})
-		assert.Equal(t, pvcAfter.GetFinalizers(), expectedFinalizers)
+		assert.Equal(t, pvcAfter.GetFinalizers(), finalizersBefore)
 		assert.Equal(t, pvAfter.GetFinalizers(), finalizersBefore)
 	})
 	t.Run("BothRemoved", func(t *testing.T) {

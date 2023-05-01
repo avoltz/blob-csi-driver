@@ -42,6 +42,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.7.0
 	github.com/pkg/errors v0.9.1
 	github.com/satori/go.uuid v1.2.0
+	golang.org/x/exp v0.0.0-20230425010034-47ecfdc1ba53
 	k8s.io/apiserver v0.26.0
 	k8s.io/pod-security-admission v0.26.0
 )

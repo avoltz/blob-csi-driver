@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
-	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/finalizer"
 	blobcsiutil "sigs.k8s.io/blob-csi-driver/pkg/util"
 
 	"github.com/Azure/azure-sdk-for-go/storage"
@@ -44,6 +43,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	maps "golang.org/x/exp/maps"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	mount_azure_blob "sigs.k8s.io/blob-csi-driver/pkg/blobfuse-proxy/pb"
@@ -313,7 +313,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	_, accountName, accountKey, containerName, authEnv, err := d.GetAuthEnv(ctx, volumeID, protocol, attrib, secrets)
+	_, accountName, _, containerName, secretName, secretNamespace, authEnv, err := d.GetAuthEnv(ctx, volumeID, protocol, attrib, secrets)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, err.Error())
 	}
@@ -339,21 +339,44 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		klog.V(3).Infof("edgecache attrib %v", attrib)
 		pvName, exists := attrib[pvNameKey]
 		var pv *v1.PersistentVolume
+		var err error
 		if exists {
-			pv, err = finalizer.GetPVByName(d.cloud.KubeClient, pvName)
+			pv, err = blobcsiutil.GetPVByName(d.cloud.KubeClient, pvName)
 		} else {
-			pv, err = finalizer.GetPVByVolumeID(d.cloud.KubeClient, volumeID)
+			pv, err = blobcsiutil.GetPVByVolumeID(d.cloud.KubeClient, volumeID)
 		}
 		if err != nil {
 			return nil, err
 		}
-		err = finalizer.AddFinalizer(d.cloud.KubeClient, pv, accountName, containerName)
+
+		// attempt to figure out the name of the kube secret for the storage account key
+		if len(secretName) == 0 { // if the keyName wasn't already figured out by 'GetAuthEnv'
+			secretName, exists = pv.ObjectMeta.Annotations[provisionerSecretNameField]
+			secretNamespace = pv.ObjectMeta.Annotations[provisionerSecretNamespaceField]
+			if !exists { // if keyName doesn't exist in the PV annotations
+				klog.Errorf("Failed to discover storage account key name.")
+				return nil, fmt.Errorf("failed to discover storage account key name")
+			}
+		}
+
+		// Pass this to RetryUpdatePVC to confidently add these annotations
+		var addAnnotations = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
+			pvcClone := inpvc.DeepCopy()
+			annotations := map[string]string{
+				"external/edgecache-create-volume":    "yes",
+				"external/edgecache-secret-name":      secretName,
+				"external/edgecache-secret-namespace": secretNamespace,
+				"external/edgecache-account":          accountName,
+				"external/edgecache-container":        containerName,
+			}
+			maps.Copy(pvcClone.ObjectMeta.Annotations, annotations)
+			return pvcClone
+		}
+		err = blobcsiutil.RetryUpdatePVC(d.cloud.KubeClient, pv.Spec.ClaimRef.Namespace, pv.Spec.ClaimRef.Name, addAnnotations)
 		if err != nil {
 			return nil, err
 		}
-		if err = d.edgeCacheManager.EnsureVolume(accountName, accountKey, containerName, targetPath); err != nil {
-			return nil, err
-		}
+
 		if err = d.edgeCacheManager.MountVolume(accountName, containerName, targetPath); err != nil {
 			return nil, err
 		}

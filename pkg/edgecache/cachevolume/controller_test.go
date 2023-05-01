@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package finalizer
+package cachevolume
 
 import (
 	"context"
@@ -49,19 +49,34 @@ func pvcWithFinalizers(p *v1.PersistentVolumeClaim, finalizers []string) *v1.Per
 	return p
 }
 
+func pvcWithAnnotations(p *v1.PersistentVolumeClaim, annotations map[string]string) *v1.PersistentVolumeClaim {
+	p.SetAnnotations(annotations)
+	return p
+}
+
 func pvWithFinalizers(p *v1.PersistentVolume, finalizers []string) *v1.PersistentVolume {
 	p.SetFinalizers(finalizers)
 	return p
 }
 
-func NewFakeFinalizer(client *fake.Clientset, mgr *mock_manager.MockManagerInterface) (*Controller, informers.SharedInformerFactory) {
+func secret(name string, namespace string, secret map[string][]byte) *v1.Secret {
+	return &v1.Secret{
+		Data: secret,
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+}
+
+func NewFakeCVController(client *fake.Clientset, mgr *mock_manager.MockManagerInterface) (*Controller, informers.SharedInformerFactory) {
 	klog.Info("Creating fake finalizer")
 	if client == nil {
 		client = fake.NewSimpleClientset()
 	}
 	informers := informers.NewSharedInformerFactory(client, 0)
 	pvcInformer := informers.Core().V1().PersistentVolumeClaims()
-	return NewEdgeCacheFinalizerController(mgr, pvcInformer, client), informers
+	return NewEdgeCacheCVController(mgr, pvcInformer, client), informers
 }
 
 func TestFinalizerRequires(t *testing.T) {
@@ -70,17 +85,17 @@ func TestFinalizerRequires(t *testing.T) {
 	informers := informers.NewSharedInformerFactory(client, 0)
 	pvcInformer := informers.Core().V1().PersistentVolumeClaims()
 	t.Run("KubeClient", func(t *testing.T) {
-		assert.Nil(t, NewEdgeCacheFinalizerController(mgr, pvcInformer, nil))
+		assert.Nil(t, NewEdgeCacheCVController(mgr, pvcInformer, nil))
 	})
 	t.Run("EdgeCacheManager", func(t *testing.T) {
-		assert.Nil(t, NewEdgeCacheFinalizerController(nil, pvcInformer, client))
+		assert.Nil(t, NewEdgeCacheCVController(nil, pvcInformer, client))
 	})
 }
 
-func TestNewFakeFinalizerNotSynced(t *testing.T) {
+func TestNewFakeCVControllerNotSynced(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ctrl, informers := NewFakeFinalizer(nil, nil)
+	ctrl, informers := NewFakeCVController(nil, nil)
 	informers.Start(ctx.Done())
 	go ctrl.Run(ctx, 2)
 }
@@ -89,7 +104,7 @@ func TestRunWorker(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	c := gomock.NewController(t)
 	mgr := mock_manager.NewMockManagerInterface(c)
-	ctrl, _ := NewFakeFinalizer(client, mgr)
+	ctrl, _ := NewFakeCVController(client, mgr)
 	assert.NotNil(t, ctrl)
 	ctrl.queue.Add(pvc())
 	go ctrl.runWorker(context.Background())
@@ -129,10 +144,11 @@ func TestProcessPVCSkip(t *testing.T) {
 			client := fake.NewSimpleClientset(objs...)
 			c := gomock.NewController(t)
 			mgr := mock_manager.NewMockManagerInterface(c)
-			ctrl, _ := NewFakeFinalizer(client, mgr)
+			ctrl, _ := NewFakeCVController(client, mgr)
 			assert.NotNil(t, ctrl)
 			assert.Nil(t, ctrl.processPVC(testcase.pvc))
 			mgr.EXPECT().DeleteVolume(gomock.Any, gomock.Any()).Times(0)
+			mgr.EXPECT().EnsureVolume(gomock.Any, gomock.Any, gomock.Any).Times(0)
 		})
 	}
 }
@@ -145,7 +161,7 @@ func TestProcessPVCDeleteVolume(t *testing.T) {
 	client := fake.NewSimpleClientset(pv1, pvc1)
 	c := gomock.NewController(t)
 	mgr := mock_manager.NewMockManagerInterface(c)
-	ctrl, _ := NewFakeFinalizer(client, mgr)
+	ctrl, _ := NewFakeCVController(client, mgr)
 	assert.NotNil(t, ctrl)
 	mgr.EXPECT().DeleteVolume("account", "container").Times(1).Return(nil)
 	assert.Nil(t, ctrl.processPVC(pvc1))
@@ -160,18 +176,64 @@ func TestPVCUpdated(t *testing.T) {
 	c := gomock.NewController(t)
 	mgr := mock_manager.NewMockManagerInterface(c)
 	t.Run("IgnoreNoECFinalizer", func(t *testing.T) {
-		ctrl, _ := NewFakeFinalizer(client, mgr)
+		ctrl, _ := NewFakeCVController(client, mgr)
 		ctrl.pvcUpdated(pvc(), pvcWithFinalizers(pvc(), []string{"hello", "world", pvcProtectionFinalizer}))
 		assert.Empty(t, ctrl.queue.Len())
 	})
 	t.Run("IgnoreProtected", func(t *testing.T) {
-		ctrl, _ := NewFakeFinalizer(client, mgr)
+		ctrl, _ := NewFakeCVController(client, mgr)
 		ctrl.pvcUpdated(pvc(), pvcWithFinalizers(pvc(), []string{finalizerName, pvcProtectionFinalizer}))
 		assert.Empty(t, ctrl.queue.Len())
 	})
-	t.Run("ProcessValid", func(t *testing.T) {
-		ctrl, _ := NewFakeFinalizer(client, mgr)
+	t.Run("ProcessValidWithFinalizers", func(t *testing.T) {
+		ctrl, _ := NewFakeCVController(client, mgr)
 		ctrl.pvcUpdated(pvc(), pvcWithFinalizers(pvc(), []string{finalizerName}))
 		assert.Equal(t, ctrl.queue.Len(), 1)
 	})
+
+	t.Run("ProcessValidWithAnnotations", func(t *testing.T) {
+		ctrl, _ := NewFakeCVController(client, mgr)
+		createVolumeAnno := map[string]string{createVolumeAnnotation: "yes"}
+		ctrl.pvcUpdated(pvc(), pvcWithAnnotations(pvc(), createVolumeAnno))
+		assert.Equal(t, ctrl.queue.Len(), 1)
+	})
+}
+
+func TestProcessPVCCreateVolume(t *testing.T) {
+	pvBefore := pv()
+
+	accountName := "acct"
+	accountKey := "shhh"
+	secretName := "i am secret"
+	secretNamespace := "i am secret space"
+	containerName := "contain me"
+	markUpAnnotations := map[string]string{
+		createVolumeAnnotation:    "yes",
+		secretNameAnnotation:      secretName,
+		secretNamespaceAnnotation: secretNamespace,
+		accountAnnotation:         accountName,
+		containerAnnotation:       containerName,
+	}
+	pvcBefore := pvcWithAnnotations(pvc(), markUpAnnotations)
+
+	volumeSecret := secret(secretName, secretNamespace, map[string][]byte{
+		secretKeyField: []byte(accountKey),
+	})
+
+	c := gomock.NewController(t)
+	mgr := mock_manager.NewMockManagerInterface(c)
+	client := fake.NewSimpleClientset(pvBefore, pvcBefore, volumeSecret)
+	ctrl, _ := NewFakeCVController(client, mgr)
+	assert.NotNil(t, ctrl)
+
+	mgr.EXPECT().EnsureVolume(accountName, accountKey, containerName).Times(1).Return(nil)
+
+	assert.Nil(t, ctrl.processPVC(pvcBefore))
+
+	expectedFinalizers := []string{finalizerName}
+	pvAfter, _ := client.CoreV1().PersistentVolumes().Get(context.TODO(), pvBefore.Name, metav1.GetOptions{})
+	assert.Equal(t, expectedFinalizers, pvAfter.GetFinalizers())
+	pvcAfter, _ := client.CoreV1().PersistentVolumeClaims(defaultPVCNamespace).Get(context.TODO(), pvcBefore.Name, metav1.GetOptions{})
+	assert.Equal(t, expectedFinalizers, pvcAfter.GetFinalizers())
+
 }
