@@ -16,20 +16,20 @@ package default_attributes;
 */
 
 message vfstime {
-    uint32 seconds = 1;
-    uint32 nseconds = 2;
+  uint32 seconds = 1;
+  uint32 nseconds = 2;
 }
 
 message DefaultAttributes {
-    enum DefaultIdTo {
-        ROOT = 0;
-        EFFECTIVE_ID = 1;
-    }
-    uint32 version = 1;
-    uint32 mode = 2;
-    DefaultIdTo uid = 3;
-    DefaultIdTo gid = 4;
-    vfstime atime = 5;
-    vfstime mtime = 6;
-    vfstime ctime = 7;
+  enum DefaultIdTo {
+    ROOT = 0;
+    EFFECTIVE_ID = 1;
+  }
+  uint32 version = 1;
+  uint32 mode = 2;
+  DefaultIdTo uid = 3;
+  DefaultIdTo gid = 4;
+  vfstime atime = 5;
+  vfstime mtime = 6;
+  vfstime ctime = 7;
 }
