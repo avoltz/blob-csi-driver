@@ -33,33 +33,6 @@ func (m *MockManagerInterface) EXPECT() *MockManagerInterfaceMockRecorder {
 	return m.recorder
 }
 
-// DeleteVolume mocks base method.
-func (m *MockManagerInterface) DeleteVolume(accountName, containerName string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteVolume", accountName, containerName)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DeleteVolume indicates an expected call of DeleteVolume.
-func (mr *MockManagerInterfaceMockRecorder) DeleteVolume(accountName, containerName interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteVolume", reflect.TypeOf((*MockManagerInterface)(nil).DeleteVolume), accountName, containerName)
-}
-
-// EnsureVolume mocks base method.
-func (m *MockManagerInterface) EnsureVolume(accountName, accountKey, containerName string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnsureVolume", accountName, accountKey, containerName)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// EnsureVolume indicates an expected call of EnsureVolume.
-func (mr *MockManagerInterfaceMockRecorder) EnsureVolume(accountName, accountKey, containerName interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureVolume", reflect.TypeOf((*MockManagerInterface)(nil).EnsureVolume), accountName, accountKey, containerName)
-}
 
 // MountVolume mocks base method.
 func (m *MockManagerInterface) MountVolume(account, container, targetPath string) error {
