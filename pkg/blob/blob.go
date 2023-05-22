@@ -267,7 +267,7 @@ func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
 		Interface: mount.New(""),
 		Exec:      utilexec.New(),
 	}
-    
+
 	// Initialize default library driver
 	d.AddControllerServiceCapabilities(
 		[]csi.ControllerServiceCapability_RPC_Type{

@@ -33,7 +33,6 @@ func (m *MockManagerInterface) EXPECT() *MockManagerInterfaceMockRecorder {
 	return m.recorder
 }
 
-
 // MountVolume mocks base method.
 func (m *MockManagerInterface) MountVolume(account, container, targetPath string) error {
 	m.ctrl.T.Helper()
