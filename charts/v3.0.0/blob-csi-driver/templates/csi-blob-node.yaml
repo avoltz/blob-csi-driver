@@ -189,8 +189,6 @@ spec:
                   optional: true
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
-            - name: EDGECACHE_CONFIG_ENDPOINT
-              value: "{{ .Values.edgecache.configEndpoint }}"
             - name: EDGECACHE_MOUNT_ENDPOINT
               value: unix:///csi/csi_mounts.sock
             - name: BLOBFUSE_PROXY_ENDPOINT

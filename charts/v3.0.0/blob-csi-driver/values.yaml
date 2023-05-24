@@ -162,9 +162,6 @@ driver:
   httpsProxy: ""
   httpProxy: ""
 
-edgecache:
-  configEndpoint: "hydrad-config:8675"
-
 linux:
   kubelet: /var/lib/kubelet
   distro: debian

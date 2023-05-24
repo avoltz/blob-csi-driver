@@ -131,8 +131,6 @@ spec:
                   optional: true
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
-            - name: EDGECACHE_CONFIG_ENDPOINT
-              value: "{{ .Values.edgecache.configEndpoint }}"
             {{- if ne .Values.driver.httpsProxy "" }}
             - name: HTTPS_PROXY
               value: {{ .Values.driver.httpsProxy }}
