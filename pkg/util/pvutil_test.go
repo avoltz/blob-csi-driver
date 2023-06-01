@@ -98,6 +98,12 @@ func TestGetPVByVolumeID(t *testing.T) {
 		assert.NotNil(t, pv)
 		assert.Nil(t, err)
 	})
+	t.Run("NilCSISpec", func(t *testing.T) {
+		client := fake.NewSimpleClientset(&v1.PersistentVolume{Spec: v1.PersistentVolumeSpec{PersistentVolumeSource: v1.PersistentVolumeSource{CSI: nil}}})
+		pv, err := GetPVByVolumeID(client, defaultVolumeID)
+		assert.Nil(t, pv)
+		assert.NotNil(t, err)
+	})
 }
 
 func TestGetPVByName(t *testing.T) {
