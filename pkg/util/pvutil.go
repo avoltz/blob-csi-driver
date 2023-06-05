@@ -43,7 +43,7 @@ func GetPVByVolumeID(client clientset.Interface, volumeID string) (*v1.Persisten
 		return nil, err
 	}
 	for _, pv := range pvList.Items {
-		if pv.Spec.CSI.VolumeHandle == volumeID {
+		if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeHandle == volumeID {
 			return &pv, nil
 		}
 	}

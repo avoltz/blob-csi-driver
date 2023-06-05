@@ -26,27 +26,22 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/blob_cache_volume"
-	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/cache_volume_service"
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/csi_mounts"
 )
 
 type Manager struct {
 	connectTimeout int
-	configEndpoint string
 	mountEndpoint  string
 }
 
 type ManagerInterface interface {
-	EnsureVolume(accountName string, accountKey string, containerName string) error
-	DeleteVolume(accountName string, containerName string) error
 	MountVolume(account string, container string, targetPath string) error
 	UnmountVolume(volumeID string, targetPath string) error
 }
 
-func NewManager(connectTimeout int, configEndpoint string, mountEndpoint string) *Manager {
+func NewManager(connectTimeout int, mountEndpoint string) *Manager {
 	return &Manager{
 		connectTimeout: connectTimeout,
-		configEndpoint: configEndpoint,
 		mountEndpoint:  mountEndpoint,
 	}
 }
@@ -66,103 +61,6 @@ func GetStagingPath(path string) string {
 		If edgecache were a standalone CSI driver we could drop this suffix.
 	*/
 	return filepath.Join(path, "edgecache")
-}
-
-func sendGetVolume(client cache_volume_service.CacheVolumeClient, account string, container string) (bool, error) {
-	blobVolumeName := blob_cache_volume.Name{
-		Account:   &account,
-		Container: &container,
-	}
-
-	getReq := cache_volume_service.GetBlobRequest{
-		Names: []*blob_cache_volume.Name{&blobVolumeName},
-	}
-
-	klog.V(3).Infof("calling edgecache GetBlob")
-	getRsp, err := client.GetBlob(context.TODO(), &getReq)
-	if err != nil {
-		klog.Errorf("GRPC call returned with an error: %v", err)
-		return false, err
-	}
-	klog.V(3).Infof("GetBlob found %d volumes", len(getRsp.Volumes))
-	found := len(getRsp.Volumes) > 0
-	return found, err
-}
-
-func sendCreateVolume(client cache_volume_service.CacheVolumeClient, account string, container string, key string) error {
-	authenticator := blob_cache_volume.Authenticator{
-		Authenticator: &blob_cache_volume.Authenticator_AccountKey{AccountKey: key},
-	}
-
-	blobVolume := blob_cache_volume.BlobCacheVolume{
-		Name: &blob_cache_volume.Name{
-			Account:   &account,
-			Container: &container,
-		},
-		Auth: &authenticator,
-	}
-
-	addReq := cache_volume_service.CreateBlobRequest{
-		Volume: &blobVolume,
-	}
-
-	klog.V(3).Infof("calling edgecache CreateBlob %s %s %d", account, container, len(key))
-	_, err := client.CreateBlob(context.TODO(), &addReq)
-	if err != nil {
-		klog.Errorf("GRPC call returned with an error: %v", err)
-		return err
-	}
-	klog.V(3).Infof("CreateBlob succeeded")
-	return nil
-}
-
-func sendDeleteVolume(client cache_volume_service.CacheVolumeClient, account string, container string, interval time.Duration, timeout time.Duration) error {
-	deleteReq := cache_volume_service.DeleteBlobRequest{
-		Name: &blob_cache_volume.Name{
-			Account:   &account,
-			Container: &container,
-		},
-	}
-
-	delctx, delcancel := context.WithCancel(context.Background())
-	defer delcancel()
-
-	result := make(chan bool)
-	go func() {
-		for {
-			klog.V(3).Infof("Sending deleteblob for %s/%s", account, container)
-			_, err := client.DeleteBlob(context.TODO(), &deleteReq)
-			if err != nil {
-				klog.V(3).Info("deleteblob received error %s", err)
-				errStatus, ok := status.FromError(err)
-				if ok && errStatus.Code() == codes.NotFound {
-					// ignore NotFound status
-					err = nil
-				}
-				if !ok {
-					klog.Errorf("invalid deleteblob error received %s", errStatus)
-				}
-			}
-			if err != nil {
-				klog.Warningf("DeleteBlob GRPC failed (will retry) returned with an error: %v", err)
-				time.Sleep(interval)
-			} else {
-				result <- true
-				return
-			}
-			if delctx.Err() != nil {
-				klog.Errorf("DeleteBlob cancelled %q", delctx.Err().Error())
-				return
-			}
-		}
-	}()
-	select {
-	case <-result:
-		klog.V(3).Infof("DeleteBlob succeeded for %s/%s", account, container)
-	case <-time.After(timeout):
-		return status.Error(codes.DeadlineExceeded, "Deadline exceeded for deleteblob")
-	}
-	return nil
 }
 
 func sendMount(client csi_mounts.CSIMountsClient, account string, container string, targetPath string, interval time.Duration, timeout time.Duration) error {
@@ -224,15 +122,6 @@ func sendUnmount(client csi_mounts.CSIMountsClient, targetPath string) error {
 	return nil
 }
 
-func createVolume(client cache_volume_service.CacheVolumeClient, accountName string, accountKey string, containerName string) error {
-	if found, err := sendGetVolume(client, accountName, containerName); err != nil {
-		return err
-	} else if !found {
-		return sendCreateVolume(client, accountName, containerName, accountKey)
-	}
-	return nil
-}
-
 type ConnectionUsingFunc func(conn grpc.ClientConnInterface) error
 
 func (m *Manager) callWithConnection(fun ConnectionUsingFunc, endpoint string) error {
@@ -247,18 +136,6 @@ func (m *Manager) callWithConnection(fun ConnectionUsingFunc, endpoint string) e
 	}
 	defer conn.Close()
 	return fun(conn)
-}
-
-func (m *Manager) EnsureVolume(accountName string, accountKey string, containerName string) error {
-	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
-		return createVolume(cache_volume_service.NewCacheVolumeClient(conn), accountName, accountKey, containerName)
-	}, m.configEndpoint)
-}
-
-func (m *Manager) DeleteVolume(accountName string, containerName string) error {
-	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
-		return sendDeleteVolume(cache_volume_service.NewCacheVolumeClient(conn), accountName, containerName, 1*time.Second, 30*time.Second)
-	}, m.configEndpoint)
 }
 
 func (m *Manager) MountVolume(account string, container string, targetPath string) error {

@@ -33,7 +33,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	k8sutil "k8s.io/kubernetes/pkg/volume/util"
@@ -42,7 +41,6 @@ import (
 
 	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
-	"sigs.k8s.io/blob-csi-driver/pkg/edgecache/cachevolume"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
@@ -221,7 +219,7 @@ func NewDriver(options *DriverOptions) *Driver {
 		customUserAgent:                        options.CustomUserAgent,
 		userAgentSuffix:                        options.UserAgentSuffix,
 		blobfuseProxyEndpoint:                  options.BlobfuseProxyEndpoint,
-		edgeCacheManager:                       edgecache.NewManager(options.EdgeCacheConnTimeout, options.EdgeCacheConfigEndpoint, options.EdgeCacheMountEndpoint),
+		edgeCacheManager:                       edgecache.NewManager(options.EdgeCacheConnTimeout, options.EdgeCacheMountEndpoint),
 		enableBlobfuseProxy:                    options.EnableBlobfuseProxy,
 		enableEdgeCacheFinalizer:               options.EnableEdgeCacheFinalizer,
 		allowInlineVolumeKeyAccessWithIdentity: options.AllowInlineVolumeKeyAccessWithIdentity,
@@ -268,18 +266,6 @@ func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
 	d.mounter = &mount.SafeFormatAndMount{
 		Interface: mount.New(""),
 		Exec:      utilexec.New(),
-	}
-
-	// When NodeID is empty, the plugin runs as controller
-	// We do not need to run the finalizer on every node, so run with controllers
-	if d.NodeID == "" && d.enableEdgeCacheFinalizer {
-		// The controller pod can run a custom controller to manage cache volumes
-		klog.V(3).Info("Starting edgecache cv controller")
-		factory := informers.NewSharedInformerFactory(d.cloud.KubeClient, 1*time.Minute)
-		c := cachevolume.NewEdgeCacheCVController(d.edgeCacheManager, factory.Core().V1().PersistentVolumeClaims(), d.cloud.KubeClient)
-		ctx := context.Background()
-		factory.Start(ctx.Done())
-		go c.Run(ctx, 5)
 	}
 
 	// Initialize default library driver

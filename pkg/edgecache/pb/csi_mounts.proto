@@ -7,32 +7,26 @@ import "blob_cache_volume.proto";
 
 // CSI driver uses this service to initiate volume mounts
 service CSIMounts {
-    rpc AddMount (AddMountReq) returns (AddMountRsp);
-    rpc RemoveMount (RemoveMountReq) returns (RemoveMountRsp);
+  rpc AddMount(AddMountReq) returns (AddMountRsp);
+  rpc RemoveMount(RemoveMountReq) returns (RemoveMountRsp);
 }
 
 message VolumeInfo {
-    oneof volume_info {
-        blob_cache_volume.Name blob_volume = 1;
-    }
+  oneof volume_info { blob_cache_volume.Name blob_volume = 1; }
 }
 
 message AddMountReq {
-    optional string target_path = 1;
-    optional VolumeInfo volume_info = 2;
+  optional string target_path = 1;
+  optional VolumeInfo volume_info = 2;
 }
 
 enum MountReqResult {
-    SUCCESS = 0;
-    TRY_AGAIN = 1;
+  SUCCESS = 0;
+  TRY_AGAIN = 1;
 }
 
-message AddMountRsp {
-}
+message AddMountRsp {}
 
-message RemoveMountReq {
-    optional string target_path = 1;
-}
+message RemoveMountReq { optional string target_path = 1; }
 
-message RemoveMountRsp {
-}
+message RemoveMountRsp {}
