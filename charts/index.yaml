@@ -221,7 +221,7 @@ entries:
     appVersion: v3.0.0
     created: "2023-05-22T15:32:39.254303884Z"
     description: Azure Blob Storage CSI driver
-    digest: b8cb86c51e1e93f0dabcccd4026933072dd633e439048eb14aa77008ab2096cb
+    digest: f083816958c1ee4f524c2cd18d9bf3a6d559f903e9326000bdf0d5a71b8d7702
     name: blob-csi-driver
     urls:
     - https://raw.githubusercontent.com/avoltz/blob-csi-driver/staging/charts/v3.0.0/blob-csi-driver-v3.0.0.tgz
