@@ -1,5 +1,5 @@
 # Azure Blob Storage CSI driver for Kubernetes
-[![Travis](https://travis-ci.org/kubernetes-sigs/blob-csi-driver.svg)](https://travis-ci.org/kubernetes-sigs/blob-csi-driver)
+![linux build status](https://github.com/kubernetes-sigs/blob-csi-driver/actions/workflows/linux.yaml/badge.svg)
 [![Coverage Status](https://coveralls.io/repos/github/kubernetes-sigs/blob-csi-driver/badge.svg?branch=master)](https://coveralls.io/github/kubernetes-sigs/blob-csi-driver?branch=master)
 [![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fkubernetes-sigs%2Fblob-csi-driver.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fkubernetes-sigs%2Fblob-csi-driver?ref=badge_shield)
 
@@ -17,10 +17,10 @@ Disclaimer: Deploying this driver manually is not an officially supported Micros
 ### Container Images & Kubernetes Compatibility:
 |driver version  |Image                                                 | supported k8s version | built-in blobfuse v1 version | built-in blobfuse v2 version|
 |----------------|------------------------------------------------------|-----------------------|------------------------------| ----------------------------|
-|master branch   |mcr.microsoft.com/k8s/csi/blob-csi:latest             | 1.21+                 | 1.4.5                        | 2.0.2           |
-|v1.20.1         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.20.1 | 1.21+                 | 1.4.5                        | 2.0.2           |
-|v1.19.2         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.19.2 | 1.21+                 | 1.4.5                        | 2.0.2           |
-|v1.18.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.18.0 | 1.21+                 | 1.4.5                        | 2.0.0-preview.3 |
+|master branch   |mcr.microsoft.com/k8s/csi/blob-csi:latest             | 1.21+                 | 1.4.5                        | 2.0.3           |
+|v1.22.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.22.0 | 1.21+                 | 1.4.5                        | 2.0.3           |
+|v1.21.3         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.21.3 | 1.21+                 | 1.4.5                        | 2.0.3           |
+|v1.20.2         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.20.2 | 1.21+                 | 1.4.5                        | 2.0.3           |
 
 ### Driver parameters
 Please refer to `blob.csi.azure.com` [driver parameters](./docs/driver-parameters.md)
@@ -38,6 +38,8 @@ Please refer to `blob.csi.azure.com` [driver parameters](./docs/driver-parameter
 This option does not depend on cloud provider config file, supports cross subscription and on-premise cluster scenario. Refer to [detailed steps](./deploy/example/e2e_usage.md#option2-bring-your-own-storage-account).
 
 ### Install driver on a Kubernetes cluster
+> Note: this feature is only available in v1.19.5, v1.21.1 and later versions.
+>
 > To install specific blobfuse v1 version, run following command directly after driver is running on the agent node:
 > ```console
 > kubectl patch daemonset csi-blob-node -n kube-system -p '{"spec":{"template":{"spec":{"initContainers":[{"env":[{"name":"INSTALL_BLOBFUSE","value":"true"},{"name":"BLOBFUSE_VERSION","value":"1.4.5"}],"name":"install-blobfuse-proxy"}]}}}}'
@@ -45,7 +47,7 @@ This option does not depend on cloud provider config file, supports cross subscr
 >
 > To install specific blobfuse v2 version, run following command directly after driver is running on the agent node:
 > ```console
-> kubectl patch daemonset csi-blob-node -n kube-system -p '{"spec":{"template":{"spec":{"initContainers":[{"env":[{"name":"INSTALL_BLOBFUSE2","value":"true"},{"name":"BLOBFUSE2_VERSION","value":"2.0.2"}],"name":"install-blobfuse-proxy"}]}}}}'
+> kubectl patch daemonset csi-blob-node -n kube-system -p '{"spec":{"template":{"spec":{"initContainers":[{"env":[{"name":"INSTALL_BLOBFUSE2","value":"true"},{"name":"BLOBFUSE2_VERSION","value":"2.0.3"}],"name":"install-blobfuse-proxy"}]}}}}'
 > ```
 >
  - install by [helm charts](./charts)
@@ -61,6 +63,7 @@ This option does not depend on cloud provider config file, supports cross subscr
  - [Basic usage](./deploy/example/e2e_usage.md)
  - [NFSv3](./deploy/example/nfs)
  - [fsGroupPolicy](./deploy/example/fsgroup)
+ - [Workload identity](./docs/workload-identity.md)
 
 ### Troubleshooting
  - [CSI driver troubleshooting guide](./docs/csi-debug.md)

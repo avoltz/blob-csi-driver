@@ -19,7 +19,6 @@ package blob
 import (
 	"fmt"
 	"io/fs"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,7 +50,7 @@ import (
 
 const (
 	waitForMountInterval = 20 * time.Millisecond
-	waitForMountTimeout  = 3 * time.Second
+	waitForMountTimeout  = 60 * time.Second
 )
 
 type MountClient struct {
@@ -192,6 +191,8 @@ func (d *Driver) mountBlobfuseWithProxy(args, protocol string, authEnv []string)
 
 func (d *Driver) mountBlobfuseInsideDriver(args string, protocol string, authEnv []string) (string, error) {
 	var cmd *exec.Cmd
+
+	args = blobcsiutil.TrimDuplicatedSpace(args)
 
 	mountLog := "mount inside driver with"
 	if protocol == Fuse2 {
@@ -656,7 +657,7 @@ func (d *Driver) ensureMountPoint(target string, perm os.FileMode) (bool, error)
 
 	if !notMnt {
 		// testing original mount point, make sure the mount link is valid
-		_, err := ioutil.ReadDir(target)
+		_, err := os.ReadDir(target)
 		if err == nil {
 			klog.V(2).Infof("already mounted to target %s", target)
 			return !notMnt, nil

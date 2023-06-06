@@ -20,6 +20,9 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux  # add "kubernetes.io/role: master" to run controller on master node
       priorityClassName: system-cluster-critical
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       tolerations:
         - key: "node-role.kubernetes.io/master"
           operator: "Exists"
@@ -32,7 +35,7 @@ spec:
           effect: "NoSchedule"
       containers:
         - name: csi-provisioner
-          image: mcr.microsoft.com/oss/kubernetes-csi/csi-provisioner:v3.3.0
+          image: mcr.microsoft.com/oss/kubernetes-csi/csi-provisioner:v3.5.0
           args:
             - "-v=2"
             - "--csi-address=$(ADDRESS)"
@@ -55,7 +58,7 @@ spec:
               cpu: 10m
               memory: 20Mi
         - name: liveness-probe
-          image: mcr.microsoft.com/oss/kubernetes-csi/livenessprobe:v2.8.0
+          image: mcr.microsoft.com/oss/kubernetes-csi/livenessprobe:v2.10.0
           args:
             - --csi-address=/csi/csi.sock
             - --probe-timeout=3s
@@ -113,7 +116,7 @@ spec:
               cpu: 10m
               memory: 20Mi
         - name: csi-resizer
-          image: mcr.microsoft.com/oss/kubernetes-csi/csi-resizer:v1.5.0
+          image: mcr.microsoft.com/oss/kubernetes-csi/csi-resizer:v1.8.0
           args:
             - "-csi-address=$(ADDRESS)"
             - "-v=2"

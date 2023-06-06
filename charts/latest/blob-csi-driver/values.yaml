@@ -6,19 +6,19 @@ image:
     pullPolicy: IfNotPresent
   csiProvisioner:
     repository: /oss/kubernetes-csi/csi-provisioner
-    tag: v3.3.0
+    tag: v3.5.0
     pullPolicy: IfNotPresent
   livenessProbe:
     repository: /oss/kubernetes-csi/livenessprobe
-    tag: v2.8.0
+    tag: v2.10.0
     pullPolicy: IfNotPresent
   nodeDriverRegistrar:
     repository: /oss/kubernetes-csi/csi-node-driver-registrar
-    tag: v2.6.2
+    tag: v2.8.0
     pullPolicy: IfNotPresent
   csiResizer:
     repository: /oss/kubernetes-csi/csi-resizer
-    tag: v1.6.0
+    tag: v1.8.0
     pullPolicy: IfNotPresent
 
 cloud: AzurePublicCloud
@@ -117,9 +117,9 @@ node:
   enableBlobfuseProxy: false
   blobfuseProxy:
     installBlobfuse: true
-    blobfuseVersion: ""
+    blobfuseVersion: "1.4.5"
     installBlobfuse2: true
-    blobfuse2Version: ""
+    blobfuse2Version: "2.0.3"
     setMaxOpenFileNum: true
     maxOpenFileNum: "9000000"
     disableUpdateDB: true
@@ -151,7 +151,7 @@ node:
     - operator: "Exists"
 
 feature:
-  enableFSGroupPolicy: false
+  fsGroupPolicy: ReadWriteOnceWithFSType
   enableGetVolumeStats: false
 
 driver:
@@ -168,3 +168,9 @@ edgecache:
 linux:
   kubelet: /var/lib/kubelet
   distro: debian
+
+workloadIdentity:
+  clientID: ""
+  # [optional] If the AAD application or user-assigned managed identity is not in the same tenant as the cluster
+  # then set tenantID with the application or user-assigned managed identity tenant ID
+  tenantID: ""
