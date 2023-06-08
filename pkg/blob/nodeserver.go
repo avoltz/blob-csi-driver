@@ -360,6 +360,15 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			}
 		}
 
+		var storageAuthType string
+		if d.cloud.Config.AzureAuthConfig.UseFederatedWorkloadIdentityExtension {
+			storageAuthType = "WorkloadIdentity"
+		} else if d.cloud.Config.AzureAuthConfig.UseManagedIdentityExtension {
+			storageAuthType = "ManagedIdentity"
+		} else {
+			return nil, fmt.Errorf("Unable to detect authentication type. Cannot continue.")
+		}
+
 		// Pass this to RetryUpdatePVC to confidently add these annotations
 		var addAnnotations = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
 			pvcClone := inpvc.DeepCopy()
@@ -369,6 +378,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 				"external/edgecache-secret-namespace": secretNamespace,
 				"external/edgecache-account":          accountName,
 				"external/edgecache-container":        containerName,
+				"external/edgecache-authentication":   storageAuthType,
 			}
 			maps.Copy(pvcClone.ObjectMeta.Annotations, annotations)
 			return pvcClone
