@@ -366,7 +366,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		} else if d.cloud.Config.AzureAuthConfig.UseManagedIdentityExtension {
 			storageAuthType = "ManagedIdentity"
 		} else {
-			return nil, fmt.Errorf("Unable to detect authentication type. Cannot continue.")
+			return nil, fmt.Errorf("unable to detect authentication type, cannot continue")
 		}
 
 		// Pass this to RetryUpdatePVC to confidently add these annotations
