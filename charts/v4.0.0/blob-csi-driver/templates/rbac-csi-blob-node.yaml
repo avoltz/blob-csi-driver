@@ -11,11 +11,11 @@ rules:
     resources: ["secrets"]
     verbs: ["get"]
 
-    # the node plugin must apply finalizers to PV and PVC for edgecache volumes
-    # for static pv, pv list is used to resolve volumeID --> PV mapping
+    # the node plugin must apply annotations to the PVC for edgecache volumes
+    # it gets the PVC's through the PV's
   - apiGroups: [""]
     resources: ["persistentvolumes"]
-    verbs: ["get", "update", "list"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "update"]
