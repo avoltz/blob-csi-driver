@@ -19,7 +19,6 @@ package blob
 import (
 	"fmt"
 	"io/fs"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,7 +50,7 @@ import (
 
 const (
 	waitForMountInterval = 20 * time.Millisecond
-	waitForMountTimeout  = 3 * time.Second
+	waitForMountTimeout  = 60 * time.Second
 )
 
 type MountClient struct {
@@ -192,6 +191,8 @@ func (d *Driver) mountBlobfuseWithProxy(args, protocol string, authEnv []string)
 
 func (d *Driver) mountBlobfuseInsideDriver(args string, protocol string, authEnv []string) (string, error) {
 	var cmd *exec.Cmd
+
+	args = blobcsiutil.TrimDuplicatedSpace(args)
 
 	mountLog := "mount inside driver with"
 	if protocol == Fuse2 {
@@ -359,6 +360,15 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			}
 		}
 
+		var storageAuthType string
+		if d.cloud.Config.AzureAuthConfig.UseFederatedWorkloadIdentityExtension {
+			storageAuthType = "WorkloadIdentity"
+		} else if d.cloud.Config.AzureAuthConfig.UseManagedIdentityExtension {
+			storageAuthType = "ManagedIdentity"
+		} else {
+			return nil, fmt.Errorf("unable to detect authentication type, cannot continue")
+		}
+
 		// Pass this to RetryUpdatePVC to confidently add these annotations
 		var addAnnotations = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
 			pvcClone := inpvc.DeepCopy()
@@ -368,6 +378,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 				"external/edgecache-secret-namespace": secretNamespace,
 				"external/edgecache-account":          accountName,
 				"external/edgecache-container":        containerName,
+				"external/edgecache-authentication":   storageAuthType,
 			}
 			maps.Copy(pvcClone.ObjectMeta.Annotations, annotations)
 			return pvcClone
@@ -656,7 +667,7 @@ func (d *Driver) ensureMountPoint(target string, perm os.FileMode) (bool, error)
 
 	if !notMnt {
 		// testing original mount point, make sure the mount link is valid
-		_, err := ioutil.ReadDir(target)
+		_, err := os.ReadDir(target)
 		if err == nil {
 			klog.V(2).Infof("already mounted to target %s", target)
 			return !notMnt, nil

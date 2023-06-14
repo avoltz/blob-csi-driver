@@ -19,7 +19,7 @@
 ### install a specific version
 ```console
 helm repo add blob-csi-driver https://raw.githubusercontent.com/kubernetes-sigs/blob-csi-driver/master/charts
-helm install blob-csi-driver blob-csi-driver/blob-csi-driver --set node.enableBlobfuseProxy=true --namespace kube-system --version v1.20.1
+helm install blob-csi-driver blob-csi-driver/blob-csi-driver --set node.enableBlobfuseProxy=true --namespace kube-system --version v1.21.2
 ```
 
 ## install on Azure Stack
@@ -59,23 +59,23 @@ The following table lists the configurable parameters of the latest Azure Blob S
 | `driver.customUserAgent`                              | custom userAgent                                      | `` |
 | `driver.userAgentSuffix`                              | userAgent suffix                                      | `OSS-helm` |
 | `driver.azureGoSDKLogLevel`                           | [Azure go sdk log level](https://github.com/Azure/azure-sdk-for-go/blob/main/documentation/previous-versions-quickstart.md#built-in-basic-requestresponse-logging)  | ``(no logs), `DEBUG`, `INFO`, `WARNING`, `ERROR`, [etc](https://github.com/Azure/go-autorest/blob/50e09bb39af124f28f29ba60efde3fa74a4fe93f/logger/logger.go#L65-L73) |
-| `feature.enableFSGroupPolicy`                         | enable `fsGroupPolicy` on a k8s 1.20+ cluster         | `false`                      |
+| `feature.fsGroupPolicy`                               | CSIDriver FSGroupPolicy value                  | `ReadWriteOnceWithFSType`(available values: `ReadWriteOnceWithFSType`, `File`, `None`) |
 | `feature.enableGetVolumeStats`                        | allow GET_VOLUME_STATS on agent node                  | `false`                      |
 | `image.baseRepo`                                      | base repository of driver images                      | `mcr.microsoft.com`                      |
 | `image.blob.repository`                               | blob-csi-driver docker image                          | `mcr.microsoft.com/oss/kubernetes-csi/blob-csi`                             |
 | `image.blob.tag`                                      | blob-csi-driver docker image tag                      | `latest`                                                         |
 | `image.blob.pullPolicy`                               | blob-csi-driver image pull policy                     | `IfNotPresent`                                                   |
 | `image.csiProvisioner.repository`                     | csi-provisioner docker image                          | `mcr.microsoft.com/oss/kubernetes-csi/csi-provisioner`           |
-| `image.csiProvisioner.tag`                            | csi-provisioner docker image tag                      | `v3.3.0`                                                         |
+| `image.csiProvisioner.tag`                            | csi-provisioner docker image tag                      | `v3.5.0`                                                         |
 | `image.csiProvisioner.pullPolicy`                     | csi-provisioner image pull policy                     | `IfNotPresent`                                                   |
 | `image.livenessProbe.repository`                      | liveness-probe docker image                           | `mcr.microsoft.com/oss/kubernetes-csi/livenessprobe`             |
-| `image.livenessProbe.tag`                             | liveness-probe docker image tag                       | `v2.8.0`                                                         |
+| `image.livenessProbe.tag`                             | liveness-probe docker image tag                       | `v2.10.0`                                                         |
 | `image.livenessProbe.pullPolicy`                      | liveness-probe image pull policy                      | `IfNotPresent`                                                   |
 | `image.nodeDriverRegistrar.repository`                | csi-node-driver-registrar docker image                | `mcr.microsoft.com/oss/kubernetes-csi/csi-node-driver-registrar` |
-| `image.nodeDriverRegistrar.tag`                       | csi-node-driver-registrar docker image tag            | `v2.6.2`                                                      |
+| `image.nodeDriverRegistrar.tag`                       | csi-node-driver-registrar docker image tag            | `v2.8.0`                                                      |
 | `image.nodeDriverRegistrar.pullPolicy`                | csi-node-driver-registrar image pull policy           | `IfNotPresent`                                                   |
 | `image.csiResizer.repository`                         | csi-resizer docker image                              | `mcr.microsoft.com/oss/kubernetes-csi/csi-resizer`               |
-| `image.csiResizer.tag`                                | csi-resizer docker image tag                          | `v1.6.0`                                                         |
+| `image.csiResizer.tag`                                | csi-resizer docker image tag                          | `v1.8.0`                                                         |
 | `image.csiResizer.pullPolicy`                         | csi-resizer image pull policy                         | `IfNotPresent`                                                   |
 | `imagePullSecrets`                                    | Specify docker-registry secret names as an array      | [] (does not add image pull secrets to deployed pods)          |
 | `cloud`                                               | the cloud environment the driver is running on        | `AzurePublicCloud`                                               |
@@ -146,6 +146,8 @@ The following table lists the configurable parameters of the latest Azure Blob S
 | `node.tolerations`                                    | node pod tolerations                                  | []                                                             |
 | `linux.kubelet`                                       | configure kubelet directory path on Linux agent node node                  | `/var/lib/kubelet`                                                |
 | `linux.distro`                                        | configure ssl certificates for different Linux distribution(available values: `debian`, `fedora`)             | `debian`
+| `workloadIdentity.clientID` | client ID of workload identity | ''
+| `workloadIdentity.tenantID` | [optional] If the AAD application or user-assigned managed identity is not in the same tenant as the cluster then set tenantID with the AAD application or user-assigned managed identity tenant ID | ''
 
 ## troubleshooting
  - Add `--wait -v=5 --debug` in `helm install` command to get detailed error

@@ -54,11 +54,11 @@ spec:
             - name: INSTALL_BLOBFUSE
               value: "true"
             - name: BLOBFUSE_VERSION
-              value: ""
+              value: "1.4.5"
             - name: INSTALL_BLOBFUSE2
               value: "true"
             - name: BLOBFUSE2_VERSION
-              value: ""
+              value: "2.0.3"
             - name: SET_MAX_OPEN_FILE_NUM
               value: "true"
             - name: MAX_FILE_NUM
@@ -75,7 +75,7 @@ spec:
           volumeMounts:
             - mountPath: /csi
               name: socket-dir
-          image: mcr.microsoft.com/oss/kubernetes-csi/livenessprobe:v2.8.0
+          image: mcr.microsoft.com/oss/kubernetes-csi/livenessprobe:v2.10.0
           args:
             - --csi-address=/csi/csi.sock
             - --probe-timeout=3s
@@ -88,7 +88,7 @@ spec:
               cpu: 10m
               memory: 20Mi
         - name: node-driver-registrar
-          image: mcr.microsoft.com/oss/kubernetes-csi/csi-node-driver-registrar:v2.6.2
+          image: mcr.microsoft.com/oss/kubernetes-csi/csi-node-driver-registrar:v2.8.0
           args:
             - --csi-address=$(ADDRESS)
             - --kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)

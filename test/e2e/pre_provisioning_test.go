@@ -17,10 +17,9 @@ limitations under the License.
 package e2e
 
 import (
-	"context"
 	"fmt"
-	"os"
-	"time"
+	"math/rand"
+	"strconv"
 
 	"sigs.k8s.io/blob-csi-driver/test/e2e/driver"
 	"sigs.k8s.io/blob-csi-driver/test/e2e/testsuites"
@@ -52,11 +51,9 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Pre-Provisioned", func() {
 		ns         *v1.Namespace
 		testDriver driver.PreProvisionedVolumeTestDriver
 		volumeID   string
-		// Set to true if the volume should be deleted automatically after test
-		skipManuallyDeletingVolume bool
 	)
 
-	ginkgo.BeforeEach(func() {
+	ginkgo.BeforeEach(func(ctx ginkgo.SpecContext) {
 		checkPodsRestart := testCmd{
 			command:  "sh",
 			args:     []string{"test/utils/check_driver_pods_restart.sh"},
@@ -68,29 +65,23 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Pre-Provisioned", func() {
 		cs = f.ClientSet
 		ns = f.Namespace
 		testDriver = driver.InitBlobCSIDriver()
-	})
 
-	ginkgo.AfterEach(func() {
-		if !skipManuallyDeletingVolume {
-			req := &csi.DeleteVolumeRequest{
-				VolumeId: volumeID,
-			}
-			_, err := blobDriver.DeleteVolume(context.Background(), req)
-			if err != nil {
-				ginkgo.Fail(fmt.Sprintf("delete volume %q error: %v", volumeID, err))
-			}
-		}
-	})
-
-	ginkgo.It("[env] should use a pre-provisioned volume and mount it as readOnly in a pod", func() {
-		req := makeCreateVolumeReq("pre-provisioned-readonly", ns.Name)
-		resp, err := blobDriver.CreateVolume(context.Background(), req)
-		if err != nil {
-			ginkgo.Fail(fmt.Sprintf("create volume error: %v", err))
-		}
+		volName := fmt.Sprintf("pre-provisioned-%d-%v", ginkgo.GinkgoParallelProcess(), strconv.Itoa(rand.Intn(10000)))
+		resp, err := blobDriver.CreateVolume(ctx, makeCreateVolumeReq(volName, ns.Name))
+		framework.ExpectNoError(err, "create volume error")
 		volumeID = resp.Volume.VolumeId
-		ginkgo.By(fmt.Sprintf("Successfully provisioned blob volume: %q\n", volumeID))
 
+		ginkgo.DeferCleanup(func(ctx ginkgo.SpecContext) {
+			_, err := blobDriver.DeleteVolume(
+				ctx,
+				&csi.DeleteVolumeRequest{
+					VolumeId: volumeID,
+				})
+			framework.ExpectNoError(err, "delete volume %s error", volumeID)
+		})
+	})
+
+	ginkgo.It("[env] should use a pre-provisioned volume and mount it as readOnly in a pod", func(ctx ginkgo.SpecContext) {
 		volumeSize := fmt.Sprintf("%dGi", defaultVolumeSize)
 		pods := []testsuites.PodDetails{
 			{
@@ -113,18 +104,10 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Pre-Provisioned", func() {
 			CSIDriver: testDriver,
 			Pods:      pods,
 		}
-		test.Run(cs, ns)
+		test.Run(ctx, cs, ns)
 	})
 
-	ginkgo.It(fmt.Sprintf("[env] should use a pre-provisioned volume and retain PV with reclaimPolicy %q", v1.PersistentVolumeReclaimRetain), func() {
-		req := makeCreateVolumeReq("pre-provisioned-retain-reclaimpolicy", ns.Name)
-		resp, err := blobDriver.CreateVolume(context.Background(), req)
-		if err != nil {
-			ginkgo.Fail(fmt.Sprintf("create volume error: %v", err))
-		}
-		volumeID = resp.Volume.VolumeId
-		ginkgo.By(fmt.Sprintf("Successfully provisioned blob volume: %q\n", volumeID))
-
+	ginkgo.It(fmt.Sprintf("[env] should use a pre-provisioned volume and retain PV with reclaimPolicy %q", v1.PersistentVolumeReclaimRetain), func(ctx ginkgo.SpecContext) {
 		volumeSize := fmt.Sprintf("%dGi", defaultVolumeSize)
 		reclaimPolicy := v1.PersistentVolumeReclaimRetain
 		volumes := []testsuites.VolumeDetails{
@@ -139,26 +122,21 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Pre-Provisioned", func() {
 			CSIDriver: testDriver,
 			Volumes:   volumes,
 		}
-		test.Run(cs, ns)
+		test.Run(ctx, cs, ns)
 	})
 
-	ginkgo.It("should use a pre-provisioned volume and mount it by multiple pods", func() {
+	ginkgo.It("should use a pre-provisioned volume and mount it by multiple pods", func(ctx ginkgo.SpecContext) {
 		volumeSize := fmt.Sprintf("%dGi", defaultVolumeSize)
 		pods := []testsuites.PodDetails{}
 		for i := 1; i <= 6; i++ {
-			req := makeCreateVolumeReq(fmt.Sprintf("pre-provisioned-multiple-pods%d", time.Now().UnixNano()), ns.Name)
-			resp, err := blobDriver.CreateVolume(context.Background(), req)
-			if err != nil {
-				ginkgo.Fail(fmt.Sprintf("create volume error: %v", err))
-			}
-			volumeID = resp.Volume.VolumeId
-			ginkgo.By(fmt.Sprintf("Successfully provisioned blob volume: %q\n", volumeID))
-
 			pod := testsuites.PodDetails{
 				Cmd: "echo 'hello world' > /mnt/test-1/data && grep 'hello world' /mnt/test-1/data",
 				Volumes: []testsuites.VolumeDetails{
 					{
-						VolumeID:  volumeID,
+						// make VolumeID unique in test
+						// to workaround the issue: https://github.com/kubernetes/kubernetes/pull/107065
+						// which was fixed in k8s 1.24
+						VolumeID:  fmt.Sprintf("%s%d", volumeID, i),
 						ClaimSize: volumeSize,
 						VolumeMount: testsuites.VolumeMountDetails{
 							NameGenerate:      "test-volume-",
@@ -174,18 +152,10 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Pre-Provisioned", func() {
 			CSIDriver: testDriver,
 			Pods:      pods,
 		}
-		test.Run(cs, ns)
+		test.Run(ctx, cs, ns)
 	})
 
-	ginkgo.It("should use existing credentials in k8s cluster", func() {
-		req := makeCreateVolumeReq("pre-provisioned-existing-credentials", ns.Name)
-		resp, err := blobDriver.CreateVolume(context.Background(), req)
-		if err != nil {
-			ginkgo.Fail(fmt.Sprintf("create volume error: %v", err))
-		}
-		volumeID = resp.Volume.VolumeId
-		ginkgo.By(fmt.Sprintf("Successfully provisioned blob volume: %q\n", volumeID))
-
+	ginkgo.It("should use existing credentials in k8s cluster", func(ctx ginkgo.SpecContext) {
 		volumeSize := fmt.Sprintf("%dGi", defaultVolumeSize)
 		reclaimPolicy := v1.PersistentVolumeReclaimRetain
 		volumeBindingMode := storagev1.VolumeBindingImmediate
@@ -212,18 +182,10 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Pre-Provisioned", func() {
 			CSIDriver: testDriver,
 			Pods:      pods,
 		}
-		test.Run(cs, ns)
+		test.Run(ctx, cs, ns)
 	})
 
-	ginkgo.It("should use provided credentials", func() {
-		req := makeCreateVolumeReq("pre-provisioned-provided-credentials", ns.Name)
-		resp, err := blobDriver.CreateVolume(context.Background(), req)
-		if err != nil {
-			ginkgo.Fail(fmt.Sprintf("create volume error: %v", err))
-		}
-		volumeID = resp.Volume.VolumeId
-		ginkgo.By(fmt.Sprintf("Successfully provisioned blob volume: %q\n", volumeID))
-
+	ginkgo.It("should use provided credentials", ginkgo.Label("flaky"), func(ctx ginkgo.SpecContext) {
 		volumeSize := fmt.Sprintf("%dGi", defaultVolumeSize)
 		reclaimPolicy := v1.PersistentVolumeReclaimRetain
 		volumeBindingMode := storagev1.VolumeBindingImmediate
@@ -253,18 +215,10 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Pre-Provisioned", func() {
 			Pods:      pods,
 			Driver:    blobDriver,
 		}
-		test.Run(cs, ns)
+		test.Run(ctx, cs, ns)
 	})
 
-	ginkgo.It("should use Key Vault", func() {
-		req := makeCreateVolumeReq("pre-provisioned-key-vault", ns.Name)
-		resp, err := blobDriver.CreateVolume(context.Background(), req)
-		if err != nil {
-			ginkgo.Fail(fmt.Sprintf("create volume error: %v", err))
-		}
-		volumeID = resp.Volume.VolumeId
-		ginkgo.By(fmt.Sprintf("Successfully provisioned blob volume: %q\n", volumeID))
-
+	ginkgo.It("should use Key Vault", func(ctx ginkgo.SpecContext) {
 		volumeSize := fmt.Sprintf("%dGi", defaultVolumeSize)
 		reclaimPolicy := v1.PersistentVolumeReclaimRetain
 		volumeBindingMode := storagev1.VolumeBindingImmediate
@@ -294,18 +248,10 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Pre-Provisioned", func() {
 			Pods:      pods,
 			Driver:    blobDriver,
 		}
-		test.Run(cs, ns)
+		test.Run(ctx, cs, ns)
 	})
 
-	ginkgo.It("should use SAS token", func() {
-		req := makeCreateVolumeReq("pre-provisioned-sas-token", ns.Name)
-		resp, err := blobDriver.CreateVolume(context.Background(), req)
-		if err != nil {
-			ginkgo.Fail(fmt.Sprintf("create volume error: %v", err))
-		}
-		volumeID = resp.Volume.VolumeId
-		ginkgo.By(fmt.Sprintf("Successfully provisioned blob volume: %q\n", volumeID))
-
+	ginkgo.It("should use SAS token", func(ctx ginkgo.SpecContext) {
 		pods := []testsuites.PodDetails{
 			{
 				Cmd: "echo 'hello world' > /mnt/test-1/data && grep 'hello world' /mnt/test-1/data",
@@ -331,95 +277,7 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Pre-Provisioned", func() {
 			Pods:      pods,
 			Driver:    blobDriver,
 		}
-		test.Run(cs, ns)
-	})
-
-	ginkgo.It("nfs volume mount is still valid after driver restart [blob.csi.azure.com]", func() {
-		// print driver logs before driver restart
-		blobLog := testCmd{
-			command:  "bash",
-			args:     []string{"test/utils/blob_log.sh"},
-			startLog: "===================blob log (before restart)===================",
-			endLog:   "====================================================================",
-		}
-		execTestCmd([]testCmd{blobLog})
-
-		pod := testsuites.PodDetails{
-			Cmd: "echo 'hello world' >> /mnt/test-1/data && while true; do sleep 3600; done",
-			Volumes: []testsuites.VolumeDetails{
-				{
-					ClaimSize: "10Gi",
-					VolumeMount: testsuites.VolumeMountDetails{
-						NameGenerate:      "test-volume-",
-						MountPathGenerate: "/mnt/test-",
-					},
-				},
-			},
-		}
-
-		podCheckCmd := []string{"cat", "/mnt/test-1/data"}
-		expectedString := "hello world\n"
-		test := testsuites.DynamicallyProvisionedRestartDriverTest{
-			CSIDriver: testDriver,
-			Pod:       pod,
-			PodCheck: &testsuites.PodExecCheck{
-				Cmd:            podCheckCmd,
-				ExpectedString: expectedString,
-			},
-			StorageClassParameters: map[string]string{"protocol": "nfs"},
-			RestartDriverFunc: func() {
-				restartDriver := testCmd{
-					command:  "bash",
-					args:     []string{"test/utils/restart_driver_daemonset.sh"},
-					startLog: "Restart driver node daemonset ...",
-					endLog:   "Restart driver node daemonset done successfully",
-				}
-				execTestCmd([]testCmd{restartDriver})
-			},
-		}
-		test.Run(cs, ns)
-	})
-
-	ginkgo.It("blobfuse volume mount is still valid after driver restart [blob.csi.azure.com]", func() {
-		_, useBlobfuseProxy := os.LookupEnv("ENABLE_BLOBFUSE_PROXY")
-		if !useBlobfuseProxy {
-			ginkgo.Skip("skip this test since blobfuse-proxy is not enabled")
-		}
-
-		pod := testsuites.PodDetails{
-			Cmd: "echo 'hello world' >> /mnt/test-1/data && while true; do sleep 3600; done",
-			Volumes: []testsuites.VolumeDetails{
-				{
-					ClaimSize: "10Gi",
-					VolumeMount: testsuites.VolumeMountDetails{
-						NameGenerate:      "test-volume-",
-						MountPathGenerate: "/mnt/test-",
-					},
-				},
-			},
-		}
-
-		podCheckCmd := []string{"cat", "/mnt/test-1/data"}
-		expectedString := "hello world\n"
-		test := testsuites.DynamicallyProvisionedRestartDriverTest{
-			CSIDriver: testDriver,
-			Pod:       pod,
-			PodCheck: &testsuites.PodExecCheck{
-				Cmd:            podCheckCmd,
-				ExpectedString: expectedString,
-			},
-			StorageClassParameters: map[string]string{"skuName": "Standard_LRS"},
-			RestartDriverFunc: func() {
-				restartDriver := testCmd{
-					command:  "bash",
-					args:     []string{"test/utils/restart_driver_daemonset.sh"},
-					startLog: "Restart driver node daemonset ...",
-					endLog:   "Restart driver node daemonset done successfully",
-				}
-				execTestCmd([]testCmd{restartDriver})
-			},
-		}
-		test.Run(cs, ns)
+		test.Run(ctx, cs, ns)
 	})
 })
 

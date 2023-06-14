@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"sort"
@@ -114,7 +113,7 @@ func TestRun(t *testing.T) {
 		{
 			name: "Successful run",
 			testFunc: func(t *testing.T) {
-				if err := ioutil.WriteFile(fakeCredFile, []byte(fakeCredContent), 0666); err != nil {
+				if err := os.WriteFile(fakeCredFile, []byte(fakeCredContent), 0666); err != nil {
 					t.Error(err)
 				}
 
@@ -139,7 +138,7 @@ func TestRun(t *testing.T) {
 		{
 			name: "Successful run with node ID missing",
 			testFunc: func(t *testing.T) {
-				if err := ioutil.WriteFile(fakeCredFile, []byte(fakeCredContent), 0666); err != nil {
+				if err := os.WriteFile(fakeCredFile, []byte(fakeCredContent), 0666); err != nil {
 					t.Error(err)
 				}
 
@@ -424,7 +423,7 @@ func TestIsSASToken(t *testing.T) {
 }
 
 func TestIsCorruptedDir(t *testing.T) {
-	existingMountPath, err := ioutil.TempDir(os.TempDir(), "blob-csi-mount-test")
+	existingMountPath, err := os.MkdirTemp(os.TempDir(), "blob-csi-mount-test")
 	if err != nil {
 		t.Fatalf("failed to create tmp dir: %v", err)
 	}
@@ -1048,7 +1047,7 @@ func TestGetInfoFromSecret(t *testing.T) {
 				d.cloud.KubeClient = nil
 				secretName := "foo"
 				secretNamespace := "bar"
-				_, _, _, _, _, err := d.GetInfoFromSecret(context.TODO(), secretName, secretNamespace)
+				_, _, _, _, _, _, _, err := d.GetInfoFromSecret(context.TODO(), secretName, secretNamespace)
 				expectedErr := fmt.Errorf("could not get account key from secret(%s): KubeClient is nil", secretName)
 				if assert.Error(t, err) {
 					assert.Equal(t, expectedErr, err)
@@ -1063,7 +1062,7 @@ func TestGetInfoFromSecret(t *testing.T) {
 				d.cloud.KubeClient = fakeClient
 				secretName := ""
 				secretNamespace := ""
-				_, _, _, _, _, err := d.GetInfoFromSecret(context.TODO(), secretName, secretNamespace)
+				_, _, _, _, _, _, _, err := d.GetInfoFromSecret(context.TODO(), secretName, secretNamespace)
 				// expectedErr := fmt.Errorf("could not get secret(%v): %w", secretName, err)
 				assert.Error(t, err) // could not check what type of error, needs fix
 				/*if assert.Error(t, err) {
@@ -1096,12 +1095,14 @@ func TestGetInfoFromSecret(t *testing.T) {
 				if secretCreateErr != nil {
 					t.Error("failed to create secret")
 				}
-				an, ak, accountSasToken, msiSecret, storageSPNClientSecret, err := d.GetInfoFromSecret(context.TODO(), secretName, secretNamespace)
+				an, ak, accountSasToken, msiSecret, storageSPNClientSecret, storageSPNClientID, storageSPNTenantID, err := d.GetInfoFromSecret(context.TODO(), secretName, secretNamespace)
 				assert.Equal(t, accountName, an, "accountName should match")
 				assert.Equal(t, accountKey, ak, "accountKey should match")
 				assert.Equal(t, "", accountSasToken, "accountSasToken should be empty")
 				assert.Equal(t, "", msiSecret, "msiSecret should be empty")
 				assert.Equal(t, "", storageSPNClientSecret, "storageSPNClientSecret should be empty")
+				assert.Equal(t, "", storageSPNClientID, "storageSPNClientID should be empty")
+				assert.Equal(t, "", storageSPNTenantID, "storageSPNTenantID should be empty")
 				assert.Equal(t, nil, err, "error should be nil")
 			},
 		},
@@ -1117,6 +1118,8 @@ func TestGetInfoFromSecret(t *testing.T) {
 				accountSasTokenValue := "foo"
 				msiSecretValue := "msiSecret"
 				storageSPNClientSecretValue := "storageSPNClientSecret"
+				storageSPNClientIDValue := "storageSPNClientID"
+				storageSPNTenantIDValue := "storageSPNTenantID"
 				secret := &v1api.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace: secretNamespace,
@@ -1127,6 +1130,8 @@ func TestGetInfoFromSecret(t *testing.T) {
 						accountSasTokenField:        []byte(accountSasTokenValue),
 						msiSecretField:              []byte(msiSecretValue),
 						storageSPNClientSecretField: []byte(storageSPNClientSecretValue),
+						storageSPNClientIDField:     []byte(storageSPNClientIDValue),
+						storageSPNTenantIDField:     []byte(storageSPNTenantIDValue),
 					},
 					Type: "Opaque",
 				}
@@ -1134,12 +1139,14 @@ func TestGetInfoFromSecret(t *testing.T) {
 				if secretCreateErr != nil {
 					t.Error("failed to create secret")
 				}
-				an, ak, accountSasToken, msiSecret, storageSPNClientSecret, err := d.GetInfoFromSecret(context.TODO(), secretName, secretNamespace)
+				an, ak, accountSasToken, msiSecret, storageSPNClientSecret, storageSPNClientID, storageSPNTenantID, err := d.GetInfoFromSecret(context.TODO(), secretName, secretNamespace)
 				assert.Equal(t, accountName, an, "accountName should match")
 				assert.Equal(t, "", ak, "accountKey should be empty")
 				assert.Equal(t, accountSasTokenValue, accountSasToken, "sasToken should match")
 				assert.Equal(t, msiSecretValue, msiSecret, "msiSecret should match")
 				assert.Equal(t, storageSPNClientSecretValue, storageSPNClientSecret, "storageSPNClientSecret should match")
+				assert.Equal(t, storageSPNClientIDValue, storageSPNClientID, "storageSPNClientID should match")
+				assert.Equal(t, storageSPNTenantIDValue, storageSPNTenantID, "storageSPNTenantID should match")
 				assert.Equal(t, nil, err, "error should be nil")
 			},
 		},

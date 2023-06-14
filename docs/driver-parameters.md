@@ -42,11 +42,11 @@ enableBlobVersioning | Enable [blob versioning](https://learn.microsoft.com/en-u
 
  - `fsGroup` securityContext setting
 
-Blobfuse driver does not honor `fsGroup` securityContext setting, instead user could use `-o gid=1000` in `mountoptions` to set ownership, check [here](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#mount-options) for more mountoptions.
+Blobfuse driver does not honor `fsGroup` securityContext setting, instead user could use `-o gid=1000` in `mountOptions` to set ownership, check [here](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#mount-options) for more mountoptions.
 
- - [Azure DataLake storage account](https://docs.microsoft.com/en-us/azure/storage/blobs/upgrade-to-data-lake-storage-gen2-how-to) support
-   - set `isHnsEnabled: "true"` in storage class parameter to create ADLS account by driver in dynamic provisioning.
-   - mount option `--use-adls=true` must be specified to enable blobfuse access ADLS account in static provisioning.
+ - Regarding the support for [Azure DataLake storage account](https://docs.microsoft.com/en-us/azure/storage/blobs/upgrade-to-data-lake-storage-gen2-how-to) when using blobfuse mount
+   - To create an ADLS account using the driver in dynamic provisioning, you need to specify `isHnsEnabled: "true"` in the storage class parameters.
+   - To enable blobfuse access to an ADLS account in static provisioning, you need to specify the mount option `--use-adls=true` in the persistent volume.
 
  - account tags format created by dynamic provisioning
 ```
@@ -103,7 +103,8 @@ volumeAttributes.keyVaultSecretVersion | Azure Key Vault secret version | existi
 kubectl create secret generic azure-secret --from-literal=azurestorageaccountname="xxx" --from-literal azurestorageaccountkey="xxx" --type=Opaque
 kubectl create secret generic azure-secret --from-literal=azurestorageaccountname="xxx" --from-literal azurestorageaccountsastoken="xxx" --type=Opaque
 kubectl create secret generic azure-secret --from-literal msisecret="xxx" --type=Opaque
-kubectl create secret generic azure-secret --from-literal azurestoragespnclientsecret="xxx" --type=Opaque
+# azurestoragespnclientid, azurestoragespntenantid field setting in secret is only supported from v1.21.3
+kubectl create secret generic azure-secret --from-literal azurestoragespnclientsecret="xxx" azurestoragespnclientid="xxx" azurestoragespntenantid="xxx" --type=Opaque
  ```
 
 ### Tips

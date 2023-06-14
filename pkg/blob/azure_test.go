@@ -19,13 +19,12 @@ package blob
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2021-08-01/network"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2022-07-01/network"
 	"github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/golang/mock/gomock"
 
@@ -147,7 +146,7 @@ users:
 				}
 			}()
 
-			if err := ioutil.WriteFile(fakeKubeConfig, []byte(fakeContent), 0666); err != nil {
+			if err := os.WriteFile(fakeKubeConfig, []byte(fakeContent), 0666); err != nil {
 				t.Error(err)
 			}
 		}
@@ -423,7 +422,7 @@ users:
 		}
 	}()
 
-	if err := ioutil.WriteFile(validKubeConfig, []byte(fakeContent), 0666); err != nil {
+	if err := os.WriteFile(validKubeConfig, []byte(fakeContent), 0666); err != nil {
 		t.Error(err)
 	}
 
