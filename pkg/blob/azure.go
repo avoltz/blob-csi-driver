@@ -93,6 +93,17 @@ func getCloudProvider(kubeconfig, nodeID, secretName, secretNamespace, userAgent
 		if err != nil {
 			klog.V(2).Infof("InitializeCloudFromSecret: failed to get cloud config from secret %s/%s: %v", az.SecretNamespace, az.SecretName, err)
 		}
+
+		if tenantID := os.Getenv("AZURE_TENANT_ID"); tenantID != "" {
+			config.TenantID = tenantID
+		}
+		if clientID := os.Getenv("AZURE_CLIENT_ID"); clientID != "" {
+			config.AADClientID = clientID
+		}
+		if federatedTokenFile := os.Getenv("AZURE_FEDERATED_TOKEN_FILE"); federatedTokenFile != "" {
+			config.AADFederatedTokenFile = federatedTokenFile
+			config.UseFederatedWorkloadIdentityExtension = true
+		}
 	}
 
 	if config == nil {
