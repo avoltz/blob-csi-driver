@@ -350,16 +350,18 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			return nil, err
 		}
 
-		// attempt to figure out the name of the kube secret for the storage account key
-		if len(secretName) == 0 { // if the keyName wasn't already figured out by 'GetAuthEnv'
-			secretName, exists = pv.ObjectMeta.Annotations[provisionerSecretNameField]
-			secretNamespace = pv.ObjectMeta.Annotations[provisionerSecretNamespaceField]
-			if !exists { // if keyName doesn't exist in the PV annotations
-				klog.Errorf("Failed to discover storage account key name.")
-				return nil, fmt.Errorf("failed to discover storage account key name")
-			}
+		pvc, err := blobcsiutil.GetPVCByName(d.cloud.KubeClient, pv.Spec.ClaimRef.Name, pv.Spec.ClaimRef.Namespace)
+		if err != nil {
+			return nil, err
 		}
 
+		// check if this pv is already trying to be mounted
+		pvState, pvStateOk := pvc.ObjectMeta.Annotations["external/edgecache-create-volume"]
+		if pvStateOk && pvState == "no" {
+			err = fmt.Errorf("pv is already being provisioned")
+			klog.Error(err)
+			return nil, err
+		}
 
 		// get authentication method
 		storageAuthType, storageAuthTypeOk := attrib[EcStrgAuthenticationField]
