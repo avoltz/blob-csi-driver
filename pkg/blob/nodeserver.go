@@ -360,26 +360,51 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			}
 		}
 
-		var storageAuthType string
-		if d.cloud.Config.AzureAuthConfig.UseFederatedWorkloadIdentityExtension {
-			storageAuthType = "WorkloadIdentity"
-		} else if d.cloud.Config.AzureAuthConfig.UseManagedIdentityExtension {
-			storageAuthType = "ManagedIdentity"
-		} else {
-			return nil, fmt.Errorf("unable to detect authentication type, cannot continue")
+
+		// get authentication method
+		storageAuthType, storageAuthTypeOk := attrib[EcStrgAuthenticationField]
+		if !storageAuthTypeOk {
+			err = fmt.Errorf("could not determine storage authentication for edgecache, missing key is %s.", EcStrgAuthenticationField)
+			klog.Error(err)
+			return nil, err
+		}
+
+		// initialize the annotations for the pvc
+		annotations := map[string]string{
+			"external/edgecache-create-volume":       "yes",
+			"external/edgecache-account":        accountName,
+			"external/edgecache-container":      containerName,
+			"external/edgecache-authentication": storageAuthType,
+		}
+
+		// check if authentication is possible
+		if storageAuthType == "WorkloadIdentity" && !d.cloud.Config.AzureAuthConfig.UseFederatedWorkloadIdentityExtension {
+			err = fmt.Errorf("workload identity was requested by the csi driver didn't initialize with the workload identity env vars")
+			klog.Error(err)
+			return nil, err
+
+		} else if storageAuthType == "AccountKey" {
+			if len(secretName) == 0 {
+				// attempt to figure out the name of the kube secret for the storage account key
+				var secretNameOk bool
+				var secretNamespaceOk bool
+
+				secretName, secretNameOk = pv.ObjectMeta.Annotations[provisionerSecretNameField]
+				secretNamespace, secretNamespaceOk = pv.ObjectMeta.Annotations[provisionerSecretNamespaceField]
+				if !secretNameOk || !secretNamespaceOk { // if keyName doesn't exist in the PV annotations
+					err = fmt.Errorf("failed to discover storage account key secret name or namespace")
+					klog.Error(err)
+					return nil, err
+				}
+			}
+
+			annotations["external/edgecache-secret-name"] = secretName
+			annotations["external/edgecache-secret-namespace"] = secretNamespace
 		}
 
 		// Pass this to RetryUpdatePVC to confidently add these annotations
 		var addAnnotations = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
 			pvcClone := inpvc.DeepCopy()
-			annotations := map[string]string{
-				"external/edgecache-create-volume":    "yes",
-				"external/edgecache-secret-name":      secretName,
-				"external/edgecache-secret-namespace": secretNamespace,
-				"external/edgecache-account":          accountName,
-				"external/edgecache-container":        containerName,
-				"external/edgecache-authentication":   storageAuthType,
-			}
 			maps.Copy(pvcClone.ObjectMeta.Annotations, annotations)
 			return pvcClone
 		}
