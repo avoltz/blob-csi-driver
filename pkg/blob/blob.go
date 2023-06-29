@@ -105,8 +105,6 @@ const (
 	networkEndpointTypeField        = "networkendpointtype"
 	mountPermissionsField           = "mountpermissions"
 	useDataPlaneAPIField            = "usedataplaneapi"
-	provisionerSecretNameField      = "volume.kubernetes.io/provisioner-deletion-secret-name"
-	provisionerSecretNamespaceField = "volume.kubernetes.io/provisioner-deletion-secret-namespace"
 	EcStrgAuthenticationField       = "edgecache-storage-auth"
 
 	// See https://docs.microsoft.com/en-us/rest/api/storageservices/naming-and-referencing-containers--blobs--and-metadata#container-names

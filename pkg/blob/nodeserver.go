@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
+	cv "sigs.k8s.io/blob-csi-driver/pkg/edgecache/cachevolume"
 	blobcsiutil "sigs.k8s.io/blob-csi-driver/pkg/util"
 
 	"github.com/Azure/azure-sdk-for-go/storage"
@@ -42,7 +43,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	maps "golang.org/x/exp/maps"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	mount_azure_blob "sigs.k8s.io/blob-csi-driver/pkg/blobfuse-proxy/pb"
@@ -336,6 +336,14 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	}
 
 	if protocol == EcProtocol {
+		// get authentication method
+		storageAuthType, storageAuthTypeOk := attrib[EcStrgAuthenticationField]
+		if !storageAuthTypeOk {
+			err = fmt.Errorf("could not determine storage authentication for edgecache, missing key is %s", EcStrgAuthenticationField)
+			klog.Error(err)
+			return nil, err
+		}
+
 		klog.V(2).Infof("edgecache will be used for volume %s", volumeID)
 		klog.V(3).Infof("edgecache attrib %v", attrib)
 		pvName, exists := attrib[pvNameKey]
@@ -350,68 +358,9 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			return nil, err
 		}
 
-		pvc, err := blobcsiutil.GetPVCByName(d.cloud.KubeClient, pv.Spec.ClaimRef.Name, pv.Spec.ClaimRef.Namespace)
-		if err != nil {
-			return nil, err
-		}
-
-		// check if this pv is already trying to be mounted
-		pvState, pvStateOk := pvc.ObjectMeta.Annotations["external/edgecache-create-volume"]
-		if pvStateOk && pvState == "no" {
-			err = fmt.Errorf("pv is already being provisioned")
-			klog.Error(err)
-			return nil, err
-		}
-
-		// get authentication method
-		storageAuthType, storageAuthTypeOk := attrib[EcStrgAuthenticationField]
-		if !storageAuthTypeOk {
-			err = fmt.Errorf("could not determine storage authentication for edgecache, missing key is %s.", EcStrgAuthenticationField)
-			klog.Error(err)
-			return nil, err
-		}
-
-		// initialize the annotations for the pvc
-		annotations := map[string]string{
-			"external/edgecache-create-volume":       "yes",
-			"external/edgecache-account":        accountName,
-			"external/edgecache-container":      containerName,
-			"external/edgecache-authentication": storageAuthType,
-		}
-
-		// check if authentication is possible
-		if storageAuthType == "WorkloadIdentity" && !d.cloud.Config.AzureAuthConfig.UseFederatedWorkloadIdentityExtension {
-			err = fmt.Errorf("workload identity was requested by the csi driver didn't initialize with the workload identity env vars")
-			klog.Error(err)
-			return nil, err
-
-		} else if storageAuthType == "AccountKey" {
-			if len(secretName) == 0 {
-				// attempt to figure out the name of the kube secret for the storage account key
-				var secretNameOk bool
-				var secretNamespaceOk bool
-
-				secretName, secretNameOk = pv.ObjectMeta.Annotations[provisionerSecretNameField]
-				secretNamespace, secretNamespaceOk = pv.ObjectMeta.Annotations[provisionerSecretNamespaceField]
-				if !secretNameOk || !secretNamespaceOk { // if keyName doesn't exist in the PV annotations
-					err = fmt.Errorf("failed to discover storage account key secret name or namespace")
-					klog.Error(err)
-					return nil, err
-				}
-			}
-
-			annotations["external/edgecache-secret-name"] = secretName
-			annotations["external/edgecache-secret-namespace"] = secretNamespace
-		}
-
-		// Pass this to RetryUpdatePVC to confidently add these annotations
-		var addAnnotations = func(inpvc *v1.PersistentVolumeClaim) *v1.PersistentVolumeClaim {
-			pvcClone := inpvc.DeepCopy()
-			maps.Copy(pvcClone.ObjectMeta.Annotations, annotations)
-			return pvcClone
-		}
-		err = blobcsiutil.RetryUpdatePVC(d.cloud.KubeClient, pv.Spec.ClaimRef.Namespace, pv.Spec.ClaimRef.Name, addAnnotations)
-		if err != nil {
+		cvHelper := cv.NewCVHelper(d.cloud.KubeClient)
+		providedAuth := cv.NewBlobAuth(accountName, containerName, secretName, secretNamespace, storageAuthType)
+		if err := cvHelper.SendProvisionVolume(pv, d.cloud.Config.AzureAuthConfig, providedAuth); err != nil {
 			return nil, err
 		}
 
