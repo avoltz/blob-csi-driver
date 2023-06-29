@@ -22,6 +22,7 @@ import (
 	"golang.org/x/exp/maps"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/strings/slices"
 	blobcsiutil "sigs.k8s.io/blob-csi-driver/pkg/util"
 	"sigs.k8s.io/cloud-provider-azure/pkg/provider/config"
 
@@ -37,6 +38,10 @@ const (
 	storageAuthenticationAnnotation string = "external/edgecache-authentication"
 	provisionerSecretNameField      string = "volume.kubernetes.io/provisioner-deletion-secret-name"
 	provisionerSecretNamespaceField string = "volume.kubernetes.io/provisioner-deletion-secret-namespace"
+)
+
+var (
+	validStorageAuthentications = []string{"WorkloadIdentity", "AccountKey"}
 )
 
 type BlobAuth struct {
@@ -69,6 +74,10 @@ func NewCVHelper(client clientset.Interface) *CVHelper {
 
 type CVHelperInterface interface {
 	SendProvisionVolume(pv *v1.PersistentVolume, cloudConfig config.AzureAuthConfig, strgAuthentication, acct, container string) error
+}
+
+func (c *CVHelper) requestAuthIsValid(auth string) bool {
+	return slices.Contains(validStorageAuthentications, auth)
 }
 
 func (c *CVHelper) needsToBeProvisioned(pvc *v1.PersistentVolumeClaim) bool {
@@ -118,10 +127,6 @@ func (c *CVHelper) buildAnnotations(pv *v1.PersistentVolume, cfg config.AzureAut
 		}
 		maps.Copy(annotations, secretHintAnno)
 
-	} else {
-		err := fmt.Errorf("requested authentication method: '%s' is unknown, cannot continue", providedAuth.authType)
-		klog.Error(err)
-		return nil, err
 	}
 
 	return annotations, nil
@@ -130,6 +135,12 @@ func (c *CVHelper) buildAnnotations(pv *v1.PersistentVolume, cfg config.AzureAut
 func (c *CVHelper) SendProvisionVolume(pv *v1.PersistentVolume, cloudConfig config.AzureAuthConfig, providedAuth BlobAuth) error {
 	pvc, err := blobcsiutil.GetPVCByName(c.client, pv.Spec.ClaimRef.Name, pv.Spec.ClaimRef.Namespace)
 	if err != nil {
+		return err
+	}
+
+	if valid := c.requestAuthIsValid(providedAuth.authType); !valid {
+		err := fmt.Errorf("requested storage auth %s is not a member of valid auths %+v", providedAuth.authType, validStorageAuthentications)
+		klog.Error(err)
 		return err
 	}
 
