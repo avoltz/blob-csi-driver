@@ -125,8 +125,8 @@ func TestSendProvisionVolumeFailures(t *testing.T) {
 		pv := pv()
 
 		client := fake.NewSimpleClientset(pvc, pv)
-		fkHelper := NewCVHelper(client)
-		res := fkHelper.SendProvisionVolume(pv, testcase.config, testcase.blobAuth)
+		fakeAnnotator := NewPVCAnnotator(client)
+		res := fakeAnnotator.SendProvisionVolume(pv, testcase.config, testcase.blobAuth)
 		assert.NotNil(t, res)
 
 		pvcAfter, _ := client.CoreV1().PersistentVolumeClaims(defaultPVCNamespace).Get(context.TODO(), defaultPVCName, metav1.GetOptions{})
@@ -199,8 +199,8 @@ func TestSendProvisionVolumeSuccess(t *testing.T) {
 		pv := pvWithAnnotations(pv(), testcase.pvAnnotations)
 
 		client := fake.NewSimpleClientset(pvc, pv)
-		fkHelper := NewCVHelper(client)
-		res := fkHelper.SendProvisionVolume(pv, testcase.config, testcase.blobAuth)
+		fakeAnnotator := NewPVCAnnotator(client)
+		res := fakeAnnotator.SendProvisionVolume(pv, testcase.config, testcase.blobAuth)
 		assert.Nil(t, res)
 
 		pvcAfter, _ := client.CoreV1().PersistentVolumeClaims(defaultPVCNamespace).Get(context.TODO(), defaultPVCName, metav1.GetOptions{})

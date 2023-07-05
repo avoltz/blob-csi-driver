@@ -62,25 +62,25 @@ func NewBlobAuth(account, container, secretName, secretNamespace, authType strin
 	}
 }
 
-type CVHelper struct {
+type PVCAnnotator struct {
 	client clientset.Interface
 }
 
-func NewCVHelper(client clientset.Interface) *CVHelper {
-	return &CVHelper{
+func NewPVCAnnotator(client clientset.Interface) *PVCAnnotator {
+	return &PVCAnnotator{
 		client: client,
 	}
 }
 
-type CVHelperInterface interface {
+type PVCAnnotatorInterface interface {
 	SendProvisionVolume(pv *v1.PersistentVolume, cloudConfig config.AzureAuthConfig, strgAuthentication, acct, container string) error
 }
 
-func (c *CVHelper) requestAuthIsValid(auth string) bool {
+func (c *PVCAnnotator) requestAuthIsValid(auth string) bool {
 	return slices.Contains(validStorageAuthentications, auth)
 }
 
-func (c *CVHelper) needsToBeProvisioned(pvc *v1.PersistentVolumeClaim) bool {
+func (c *PVCAnnotator) needsToBeProvisioned(pvc *v1.PersistentVolumeClaim) bool {
 	// check if pv connected to the pvc has already been passed to be created
 	pvState, pvStateOk := pvc.ObjectMeta.Annotations[createVolumeAnnotation]
 	if pvStateOk && pvState == "no" {
@@ -90,7 +90,7 @@ func (c *CVHelper) needsToBeProvisioned(pvc *v1.PersistentVolumeClaim) bool {
 	return true
 }
 
-func (c *CVHelper) buildAnnotations(pv *v1.PersistentVolume, cfg config.AzureAuthConfig, providedAuth BlobAuth) (map[string]string, error) {
+func (c *PVCAnnotator) buildAnnotations(pv *v1.PersistentVolume, cfg config.AzureAuthConfig, providedAuth BlobAuth) (map[string]string, error) {
 	annotations := map[string]string{
 		createVolumeAnnotation:          "yes",
 		accountAnnotation:               providedAuth.account,
@@ -132,7 +132,7 @@ func (c *CVHelper) buildAnnotations(pv *v1.PersistentVolume, cfg config.AzureAut
 	return annotations, nil
 }
 
-func (c *CVHelper) SendProvisionVolume(pv *v1.PersistentVolume, cloudConfig config.AzureAuthConfig, providedAuth BlobAuth) error {
+func (c *PVCAnnotator) SendProvisionVolume(pv *v1.PersistentVolume, cloudConfig config.AzureAuthConfig, providedAuth BlobAuth) error {
 	pvc, err := blobcsiutil.GetPVCByName(c.client, pv.Spec.ClaimRef.Name, pv.Spec.ClaimRef.Namespace)
 	if err != nil {
 		return err

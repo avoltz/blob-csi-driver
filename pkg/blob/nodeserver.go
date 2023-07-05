@@ -358,9 +358,9 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			return nil, err
 		}
 
-		cvHelper := cv.NewCVHelper(d.cloud.KubeClient)
+		annotator := cv.NewPVCAnnotator(d.cloud.KubeClient)
 		providedAuth := cv.NewBlobAuth(accountName, containerName, secretName, secretNamespace, storageAuthType)
-		if err := cvHelper.SendProvisionVolume(pv, d.cloud.Config.AzureAuthConfig, providedAuth); err != nil {
+		if err := annotator.SendProvisionVolume(pv, d.cloud.Config.AzureAuthConfig, providedAuth); err != nil {
 			return nil, err
 		}
 
