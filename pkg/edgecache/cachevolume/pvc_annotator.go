@@ -17,6 +17,7 @@ limitations under the License.
 package cachevolume
 
 import (
+	"errors"
 	"fmt"
 
 	"golang.org/x/exp/maps"
@@ -41,7 +42,8 @@ const (
 )
 
 var (
-	validStorageAuthentications = []string{"WorkloadIdentity", "AccountKey"}
+	validStorageAuthentications      = []string{"WorkloadIdentity", "AccountKey"}
+	ErrVolumeAlreadyBeingProvisioned = errors.New("pv is already being provisioned")
 )
 
 type BlobAuth struct {
@@ -145,9 +147,8 @@ func (c *PVCAnnotator) SendProvisionVolume(pv *v1.PersistentVolume, cloudConfig 
 	}
 
 	if prepare := c.needsToBeProvisioned(pvc); !prepare {
-		err := fmt.Errorf("pv is already being provisioned")
-		klog.Error(err)
-		return err
+		klog.Info("pv is already being provisioned")
+		return ErrVolumeAlreadyBeingProvisioned
 	}
 
 	annotations, err := c.buildAnnotations(pv, cloudConfig, providedAuth)
