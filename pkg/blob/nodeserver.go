@@ -363,10 +363,6 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 
 		err = annotator.SendProvisionVolume(pv, d.cloud.Config.AzureAuthConfig, providedAuth)
 		if err != nil {
-			if err == cv.ErrVolumeAlreadyBeingProvisioned {
-				return &csi.NodeStageVolumeResponse{}, nil
-			}
-
 			return nil, err
 		}
 
