@@ -17,7 +17,6 @@ limitations under the License.
 package cachevolume
 
 import (
-	"errors"
 	"fmt"
 
 	"golang.org/x/exp/maps"
@@ -42,8 +41,7 @@ const (
 )
 
 var (
-	validStorageAuthentications      = []string{"WorkloadIdentity", "AccountKey"}
-	ErrVolumeAlreadyBeingProvisioned = errors.New("pv is already being provisioned")
+	validStorageAuthentications = []string{"WorkloadIdentity", "AccountKey"}
 )
 
 type BlobAuth struct {
@@ -80,16 +78,6 @@ type PVCAnnotatorInterface interface {
 
 func (c *PVCAnnotator) requestAuthIsValid(auth string) bool {
 	return slices.Contains(validStorageAuthentications, auth)
-}
-
-func (c *PVCAnnotator) needsToBeProvisioned(pvc *v1.PersistentVolumeClaim) bool {
-	// check if pv connected to the pvc has already been passed to be created
-	pvState, pvStateOk := pvc.ObjectMeta.Annotations[createVolumeAnnotation]
-	if pvStateOk && pvState == "no" {
-		return false
-	}
-
-	return true
 }
 
 func (c *PVCAnnotator) buildAnnotations(pv *v1.PersistentVolume, cfg config.AzureAuthConfig, providedAuth BlobAuth) (map[string]string, error) {
@@ -135,20 +123,10 @@ func (c *PVCAnnotator) buildAnnotations(pv *v1.PersistentVolume, cfg config.Azur
 }
 
 func (c *PVCAnnotator) SendProvisionVolume(pv *v1.PersistentVolume, cloudConfig config.AzureAuthConfig, providedAuth BlobAuth) error {
-	pvc, err := blobcsiutil.GetPVCByName(c.client, pv.Spec.ClaimRef.Name, pv.Spec.ClaimRef.Namespace)
-	if err != nil {
-		return err
-	}
-
 	if valid := c.requestAuthIsValid(providedAuth.authType); !valid {
 		err := fmt.Errorf("requested storage auth %s is not a member of valid auths %+v", providedAuth.authType, validStorageAuthentications)
 		klog.Error(err)
 		return err
-	}
-
-	if prepare := c.needsToBeProvisioned(pvc); !prepare {
-		klog.Info("pv is already being provisioned")
-		return ErrVolumeAlreadyBeingProvisioned
 	}
 
 	annotations, err := c.buildAnnotations(pv, cloudConfig, providedAuth)
