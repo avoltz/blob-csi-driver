@@ -363,7 +363,11 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 
 		err = annotator.SendProvisionVolume(pv, d.cloud.Config.AzureAuthConfig, providedAuth)
 		if err != nil {
-			return nil, err
+			if err == cv.ErrVolumeAlreadyBeingProvisioned {
+				klog.V(2).Infof("NodeStageVolume: volume has already been provisioned")
+			} else {
+				return nil, err
+			}
 		}
 
 		if err = d.edgeCacheManager.MountVolume(accountName, containerName, targetPath); err != nil {
