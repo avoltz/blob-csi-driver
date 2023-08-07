@@ -362,7 +362,9 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		providedAuth := cv.NewBlobAuth(accountName, containerName, secretName, secretNamespace, storageAuthType)
 
 		err = annotator.SendProvisionVolume(pv, d.cloud.Config.AzureAuthConfig, providedAuth)
-		if err != nil {
+		if err == cv.ErrVolumeAlreadyBeingProvisioned {
+			klog.V(2).Infof("NodeStageVolume: volume has already been provisioned")
+		} else if err != nil {
 			return nil, err
 		}
 
