@@ -140,7 +140,7 @@ func (c *PVCAnnotator) SendProvisionVolume(pv *v1.PersistentVolume, cloudConfig 
 		return err
 	}
 
-	if prepare := c.needsToBeProvisioned(pvc); !prepare {
+	if !c.needsToBeProvisioned(pvc) {
 		klog.Info("pv is already being provisioned")
 		return ErrVolumeAlreadyBeingProvisioned
 	}
