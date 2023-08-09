@@ -33,7 +33,7 @@ import (
 const (
 	accountAnnotation               string = "external/edgecache-account"
 	containerAnnotation             string = "external/edgecache-container"
-	createVolumeAnnotation          string = "external/edgecache-create-volume"
+	volumeStateAnnotation           string = "external/edgecache-volume-state"
 	secretNameAnnotation            string = "external/edgecache-secret-name"
 	secretNamespaceAnnotation       string = "external/edgecache-secret-namespace"
 	storageAuthenticationAnnotation string = "external/edgecache-authentication"
@@ -84,7 +84,7 @@ func (c *PVCAnnotator) requestAuthIsValid(auth string) bool {
 
 func (c *PVCAnnotator) buildAnnotations(pv *v1.PersistentVolume, cfg config.AzureAuthConfig, providedAuth BlobAuth) (map[string]string, error) {
 	annotations := map[string]string{
-		createVolumeAnnotation:          "yes",
+		volumeStateAnnotation:           "not created",
 		accountAnnotation:               providedAuth.account,
 		containerAnnotation:             providedAuth.container,
 		storageAuthenticationAnnotation: providedAuth.authType,
@@ -126,8 +126,8 @@ func (c *PVCAnnotator) buildAnnotations(pv *v1.PersistentVolume, cfg config.Azur
 
 func (c *PVCAnnotator) needsToBeProvisioned(pvc *v1.PersistentVolumeClaim) bool {
 	// check if pv connected to the pvc has already been passed to be created
-	pvState, pvStateOk := pvc.ObjectMeta.Annotations[createVolumeAnnotation]
-	if pvStateOk && pvState == "no" {
+	pvState, pvStateOk := pvc.ObjectMeta.Annotations[volumeStateAnnotation]
+	if pvStateOk && pvState == "created" {
 		return false
 	}
 
