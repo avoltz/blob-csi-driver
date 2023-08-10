@@ -140,7 +140,7 @@ func (m *Manager) callWithConnection(fun ConnectionUsingFunc, endpoint string) e
 
 func (m *Manager) MountVolume(account string, container string, targetPath string) error {
 	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
-		return sendMount(csi_mounts.NewCSIMountsClient(conn), account, container, targetPath, 500*time.Millisecond, 5*time.Second)
+		return sendMount(csi_mounts.NewCSIMountsClient(conn), account, container, targetPath, 500*time.Millisecond, 30*time.Second)
 	}, m.mountEndpoint)
 }
 
