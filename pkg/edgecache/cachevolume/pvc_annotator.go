@@ -127,7 +127,7 @@ func (c *PVCAnnotator) buildAnnotations(pv *v1.PersistentVolume, cfg config.Azur
 func (c *PVCAnnotator) needsToBeProvisioned(pvc *v1.PersistentVolumeClaim) bool {
 	// check if pv connected to the pvc has already been passed to be created
 	pvState, pvStateOk := pvc.ObjectMeta.Annotations[volumeStateAnnotation]
-	if pvStateOk && pvState == "created" {
+	if pvStateOk && (pvState == "created" || pvState == "creating") {
 		return false
 	}
 
