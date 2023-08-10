@@ -102,7 +102,7 @@ func TestSendProvisionVolumeFailures(t *testing.T) {
 		},
 		{
 			name:        "VolumeIsAlreadyBeingProvisioned",
-			annotations: map[string]string{createVolumeAnnotation: "no"},
+			annotations: map[string]string{volumeStateAnnotation: "no"},
 			config:      config.AzureAuthConfig{},
 			blobAuth:    NewBlobAuth("", "", "", "", "WorkloadIdentity"),
 		},
@@ -154,7 +154,7 @@ func TestSendProvisionVolumeSuccess(t *testing.T) {
 			config:   config.AzureAuthConfig{UseFederatedWorkloadIdentityExtension: true},
 			blobAuth: NewBlobAuth(acct, container, "", "", "WorkloadIdentity"),
 			expectedAnnotations: map[string]string{
-				createVolumeAnnotation:          "yes",
+				volumeStateAnnotation:           "not created",
 				accountAnnotation:               acct,
 				containerAnnotation:             container,
 				storageAuthenticationAnnotation: "WorkloadIdentity",
@@ -166,7 +166,7 @@ func TestSendProvisionVolumeSuccess(t *testing.T) {
 			config:   config.AzureAuthConfig{},
 			blobAuth: NewBlobAuth(acct, container, secret, secretNamespace, "AccountKey"),
 			expectedAnnotations: map[string]string{
-				createVolumeAnnotation:          "yes",
+				volumeStateAnnotation:           "not created",
 				accountAnnotation:               acct,
 				containerAnnotation:             container,
 				secretNamespaceAnnotation:       secretNamespace,
@@ -180,7 +180,7 @@ func TestSendProvisionVolumeSuccess(t *testing.T) {
 			config:   config.AzureAuthConfig{},
 			blobAuth: NewBlobAuth(acct, container, "", "", "AccountKey"),
 			expectedAnnotations: map[string]string{
-				createVolumeAnnotation:          "yes",
+				volumeStateAnnotation:           "not created",
 				accountAnnotation:               acct,
 				containerAnnotation:             container,
 				secretNamespaceAnnotation:       secretNamespace,
