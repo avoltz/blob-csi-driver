@@ -33,6 +33,7 @@ import (
 const (
 	accountAnnotation               string = "external/edgecache-account"
 	containerAnnotation             string = "external/edgecache-container"
+	storageSuffixAnnotation         string = "external/edgecache-storage-suffix"
 	volumeStateAnnotation           string = "external/edgecache-volume-state"
 	secretNameAnnotation            string = "external/edgecache-secret-name"
 	secretNamespaceAnnotation       string = "external/edgecache-secret-namespace"
@@ -47,6 +48,7 @@ var (
 )
 
 type BlobAuth struct {
+	suffix          string
 	account         string
 	container       string
 	secretName      string
@@ -54,8 +56,9 @@ type BlobAuth struct {
 	authType        string
 }
 
-func NewBlobAuth(account, container, secretName, secretNamespace, authType string) BlobAuth {
+func NewBlobAuth(suffix, account, container, secretName, secretNamespace, authType string) BlobAuth {
 	return BlobAuth{
+		suffix:          suffix,
 		account:         account,
 		container:       container,
 		secretName:      secretName,
@@ -87,6 +90,7 @@ func (c *PVCAnnotator) buildAnnotations(pv *v1.PersistentVolume, cfg config.Azur
 		volumeStateAnnotation:           "not created",
 		accountAnnotation:               providedAuth.account,
 		containerAnnotation:             providedAuth.container,
+		storageSuffixAnnotation:         providedAuth.suffix,
 		storageAuthenticationAnnotation: providedAuth.authType,
 	}
 

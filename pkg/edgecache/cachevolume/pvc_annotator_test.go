@@ -98,25 +98,25 @@ func TestSendProvisionVolumeFailures(t *testing.T) {
 			name:        "InvalidAuthenticationType",
 			annotations: map[string]string{},
 			config:      config.AzureAuthConfig{},
-			blobAuth:    NewBlobAuth("", "", "", "", "SomethingInvalid"),
+			blobAuth:    NewBlobAuth("", "", "", "", "", "SomethingInvalid"),
 		},
 		{
 			name:        "VolumeIsAlreadyBeingProvisioned",
 			annotations: map[string]string{volumeStateAnnotation: "no"},
 			config:      config.AzureAuthConfig{},
-			blobAuth:    NewBlobAuth("", "", "", "", "WorkloadIdentity"),
+			blobAuth:    NewBlobAuth("", "", "", "", "", "WorkloadIdentity"),
 		},
 		{
 			name:        "ConfigDoesntHaveWIEnabled",
 			annotations: map[string]string{},
 			config:      config.AzureAuthConfig{},
-			blobAuth:    NewBlobAuth("", "", "", "", "WorkloadIdentity"),
+			blobAuth:    NewBlobAuth("", "", "", "", "", "WorkloadIdentity"),
 		},
 		{
 			name:        "ProvisionerFieldsAreEmpty",
 			annotations: map[string]string{},
 			config:      config.AzureAuthConfig{},
-			blobAuth:    NewBlobAuth("", "", "", "", "AccountKey"),
+			blobAuth:    NewBlobAuth("", "", "", "", "", "AccountKey"),
 		},
 	}
 
@@ -145,6 +145,7 @@ type SuccessTestCase struct {
 func TestSendProvisionVolumeSuccess(t *testing.T) {
 	acct := "iamaccount"
 	container := "iamcontainer"
+	suffix := "my.url.org"
 	secret := "shhhhhhhhh"
 	secretNamespace := "shhhhhhh "
 
@@ -152,11 +153,12 @@ func TestSendProvisionVolumeSuccess(t *testing.T) {
 		{
 			name:     "ValidWIAuth",
 			config:   config.AzureAuthConfig{UseFederatedWorkloadIdentityExtension: true},
-			blobAuth: NewBlobAuth(acct, container, "", "", "WorkloadIdentity"),
+			blobAuth: NewBlobAuth(suffix, acct, container, "", "", "WorkloadIdentity"),
 			expectedAnnotations: map[string]string{
 				volumeStateAnnotation:           "not created",
 				accountAnnotation:               acct,
 				containerAnnotation:             container,
+				storageSuffixAnnotation:         suffix,
 				storageAuthenticationAnnotation: "WorkloadIdentity",
 			},
 			pvAnnotations: map[string]string{},
@@ -164,11 +166,12 @@ func TestSendProvisionVolumeSuccess(t *testing.T) {
 		{
 			name:     "ProvidedAuthWithAccountKey",
 			config:   config.AzureAuthConfig{},
-			blobAuth: NewBlobAuth(acct, container, secret, secretNamespace, "AccountKey"),
+			blobAuth: NewBlobAuth(suffix, acct, container, secret, secretNamespace, "AccountKey"),
 			expectedAnnotations: map[string]string{
 				volumeStateAnnotation:           "not created",
 				accountAnnotation:               acct,
 				containerAnnotation:             container,
+				storageSuffixAnnotation:         suffix,
 				secretNamespaceAnnotation:       secretNamespace,
 				secretNameAnnotation:            secret,
 				storageAuthenticationAnnotation: "AccountKey",
@@ -178,11 +181,12 @@ func TestSendProvisionVolumeSuccess(t *testing.T) {
 		{
 			name:     "ProvisionerFieldsExist",
 			config:   config.AzureAuthConfig{},
-			blobAuth: NewBlobAuth(acct, container, "", "", "AccountKey"),
+			blobAuth: NewBlobAuth(suffix, acct, container, "", "", "AccountKey"),
 			expectedAnnotations: map[string]string{
 				volumeStateAnnotation:           "not created",
 				accountAnnotation:               acct,
 				containerAnnotation:             container,
+				storageSuffixAnnotation:         suffix,
 				secretNamespaceAnnotation:       secretNamespace,
 				secretNameAnnotation:            secret,
 				storageAuthenticationAnnotation: "AccountKey",

@@ -16,6 +16,7 @@ message Authenticator {
 message Name {
   optional string account = 1;
   optional string container = 2;
+  optional string storage_suffix = 3; // storage suffix url, defaults to 'core.windows.net'
 }
 
 message BlobCacheVolume {
