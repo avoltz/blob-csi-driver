@@ -359,7 +359,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		}
 
 		annotator := cv.NewPVCAnnotator(d.cloud.KubeClient)
-		providedAuth := cv.NewBlobAuth(accountName, containerName, secretName, secretNamespace, storageAuthType)
+		providedAuth := cv.NewBlobAuth(storageEndpointSuffix, accountName, containerName, secretName, secretNamespace, storageAuthType)
 
 		err = annotator.SendProvisionVolume(pv, d.cloud.Config.AzureAuthConfig, providedAuth)
 		if err == cv.ErrVolumeAlreadyBeingProvisioned {
@@ -368,7 +368,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			return nil, err
 		}
 
-		if err = d.edgeCacheManager.MountVolume(accountName, containerName, targetPath); err != nil {
+		if err = d.edgeCacheManager.MountVolume(accountName, containerName, storageEndpointSuffix, targetPath); err != nil {
 			return nil, err
 		}
 		return &csi.NodeStageVolumeResponse{}, nil

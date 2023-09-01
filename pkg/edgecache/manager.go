@@ -63,10 +63,11 @@ func GetStagingPath(path string) string {
 	return filepath.Join(path, "edgecache")
 }
 
-func sendMount(client csi_mounts.CSIMountsClient, account string, container string, targetPath string, interval time.Duration, timeout time.Duration) error {
+func sendMount(client csi_mounts.CSIMountsClient, account string, container string, suffix string, targetPath string, interval time.Duration, timeout time.Duration) error {
 	blobVolume := blob_cache_volume.Name{
-		Account:   &account,
-		Container: &container,
+		Account:       &account,
+		Container:     &container,
+		StorageSuffix: &suffix,
 	}
 	addReq := csi_mounts.AddMountReq{
 		TargetPath: &targetPath,
@@ -85,7 +86,7 @@ func sendMount(client csi_mounts.CSIMountsClient, account string, container stri
 	result := make(chan bool)
 	go func() {
 		for {
-			klog.V(3).Infof("AddMount: %s, %s, %s", account, container, targetPath)
+			klog.V(3).Infof("AddMount: %s, %s, %s, %s", suffix, account, container, targetPath)
 			_, err := client.AddMount(context.TODO(), &addReq)
 			if err != nil {
 				klog.Warningf("AddMount GRPC failed (will retry) returned with an error: %v", err)
@@ -102,7 +103,7 @@ func sendMount(client csi_mounts.CSIMountsClient, account string, container stri
 	}()
 	select {
 	case <-result:
-		klog.V(3).Infof("AddMount: succeeded for %s/%s", account, container)
+		klog.V(3).Infof("AddMount: succeeded for %s/%s/%s", suffix, account, container)
 	case <-time.After(timeout):
 		return status.Errorf(codes.DeadlineExceeded, "Deadline exceeded for mount %q", targetPath)
 	}
@@ -138,9 +139,9 @@ func (m *Manager) callWithConnection(fun ConnectionUsingFunc, endpoint string) e
 	return fun(conn)
 }
 
-func (m *Manager) MountVolume(account string, container string, targetPath string) error {
+func (m *Manager) MountVolume(account string, container string, suffix string, targetPath string) error {
 	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
-		return sendMount(csi_mounts.NewCSIMountsClient(conn), account, container, targetPath, 500*time.Millisecond, 30*time.Second)
+		return sendMount(csi_mounts.NewCSIMountsClient(conn), account, container, suffix, targetPath, 500*time.Millisecond, 30*time.Second)
 	}, m.mountEndpoint)
 }
 
