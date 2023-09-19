@@ -106,6 +106,7 @@ const (
 	mountPermissionsField        = "mountpermissions"
 	useDataPlaneAPIField         = "usedataplaneapi"
 	EcStrgAuthenticationField    = "edgecache-storage-auth"
+	UseWyvernField               = "wyvern-in-use"
 
 	// See https://docs.microsoft.com/en-us/rest/api/storageservices/naming-and-referencing-containers--blobs--and-metadata#container-names
 	containerNameMinLength = 3

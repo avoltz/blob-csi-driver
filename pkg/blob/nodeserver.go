@@ -336,6 +336,11 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	}
 
 	if protocol == EcProtocol {
+		useWyvern, useWyvernOk := attrib[UseWyvernField]
+		if useWyvernOk {
+			klog.Infof("this is the use wyvern field %s", useWyvern)
+		}
+
 		// get authentication method
 		storageAuthType, storageAuthTypeOk := attrib[EcStrgAuthenticationField]
 		if !storageAuthTypeOk {

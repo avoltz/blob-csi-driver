@@ -168,6 +168,8 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			networkEndpointType = v
 		case EcStrgAuthenticationField:
 			containerNameReplaceMap[EcStrgAuthenticationField] = v
+		case UseWyvernField:
+			containerNameReplaceMap[UseWyvernField] = v
 		case mountPermissionsField:
 			// only do validations here, used in NodeStageVolume, NodePublishVolume
 			if v != "" {
