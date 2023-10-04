@@ -22,7 +22,7 @@ resources:
     ref: echairez/cross-repo-pipelines
 
 variables:
-  - template: pipelines/templates/OneBranch.repo.variables.yml@Hydra
+  - template: pipelines/templates/OneBranch.shared.variables.yml@Hydra
     parameters:
       buildType: buddy
   - template: pipelines/templates/shared_variables.yml@Hydra
@@ -105,14 +105,14 @@ extends:
                   source BLOB_CSI_VERSION
                   echo "##vso[task.setvariable variable=BLOB_CSI_VERSION;isOutput=true]${BLOB_CSI_VERSION}"
                 displayName: Setup environment
-                name: setupStep
+                name: setupEnvironment
 
       - stage: build
         dependsOn:
           - setup
         variables:
-          TOOLCHAIN_IMAGE: $[ stageDependencies.setup.Setup.outputs['setupStep.TOOLCHAIN_IMAGE'] ]
-          pipelineBuildTag: $[ stageDependencies.setup.Setup.outputs['setupStep.VERSION_TAG'] ]
+          TOOLCHAIN_IMAGE: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.TOOLCHAIN_IMAGE'] ]
+          pipelineBuildTag: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.VERSION_TAG'] ]
         jobs:
         - ${{ each arch in parameters.architectures }}:
           - job: build_csi_container_${{ arch }}
@@ -166,8 +166,8 @@ extends:
           - setup
           - build
         variables:
-          pipelineBuildTag: $[ stageDependencies.setup.Setup.outputs['setupStep.VERSION_TAG'] ]
-          blobCsiVersion: $[ stageDependencies.setup.Setup.outputs['setupStep.BLOB_CSI_VERSION'] ]
+          pipelineBuildTag: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.VERSION_TAG'] ]
+          blobCsiVersion: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.BLOB_CSI_VERSION'] ]
           HYDRA_REPO_PREFIX: "artifact/$(ServiceTreeId)/$(ONEBRANCH_BUILD_TYPE)/"
         jobs:
           - job: PublishArtifacts
@@ -212,44 +212,16 @@ extends:
                     image="$(HYDRA_REPO_PREFIX)$(BlobImageRepo):$(blobCsiVersion)"
 
                     if ! az acr repository show -n "${{ parameters.acr }}" --image "$image" &>2 ; then
-                      echo "##vso[task.setvariable variable=pushLatest;isOutput=true]true"
+                      echo "##vso[task.setvariable variable=pushLatest]true"
                     else
-                      echo "##vso[task.setvariable variable=pushLatest;isOutput=true]false"
+                      echo "##vso[task.setvariable variable=pushLatest]false"
                     fi
                 name: csi_version
                 condition: and(eq(variables.IsOfficial, 'True'), eq(variables.IsStaging, 'True'))
 
-          - job: PublishLatest
-            condition: |
-              and(
-              eq(variables.IsOfficial, 'True'),
-              eq(variables.IsStaging, 'True'),
-              eq(dependencies.PublishArtifacts.outputs['csi_version.pushLatest'], 'true'))
-            dependsOn: PublishArtifacts
-            timeoutInMinutes: 30
-            displayName: Publish latest container image
-            pool:
-              type: linux
-              isCustom: true
-              name: $(AGENT_POOL)
-            variables:
-              ob_outputDirectory: "$(Build.SourcesDirectory)/out"
-            steps:
-              - checkout: Hydra
-              - template: pipelines/templates/job_start.yml@Hydra
-                parameters:
-                  logInAgentUami: false
-                  uploadAdx: false
-                  installVenv: false
-                  installReportGenerator: false
-
-              - template: pipelines/templates/acr_login.yml@Hydra
-                parameters:
-                  acr: ${{ parameters.acr }}
-                  onebranch: true
-
               - template: pipelines/templates/make_images_latest.yml@Hydra
                 parameters:
+                  condition: and(eq(variables.IsOfficial, 'True'), eq(variables.IsStaging, 'True'), eq(variables['pushLatest'], 'true'))
                   hydraRepoPrefix: "$(HYDRA_REPO_PREFIX)"
                   acr: "${{ parameters.acr }}"
                   dstBuildTag: "$(blobCsiVersion)"
