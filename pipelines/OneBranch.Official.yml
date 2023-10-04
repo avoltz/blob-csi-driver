@@ -1,0 +1,84 @@
+#################################################################################
+#                               OneBranch Pipelines                             #
+# This pipeline was created by EasyStart from a sample located at:              #
+#   https://aka.ms/obpipelines/easystart/samples                                #
+# Documentation:  https://aka.ms/obpipelines                                    #
+# Yaml Schema:    https://aka.ms/obpipelines/yaml/schema                        #
+# Retail Tasks:   https://aka.ms/obpipelines/tasks                              #
+# Support:        https://aka.ms/onebranchsup                                   #
+#################################################################################
+trigger:
+  batch: true
+  branches:
+    include:
+      - staging
+
+resources:
+  repositories: 
+  - repository: templates
+    type: git
+    name: OneBranch.Pipelines/GovernedTemplates
+    ref: refs/heads/main
+  - repository: Hydra
+    clean: true
+    type: git
+    name: One/Hydra
+    ref: main
+
+variables:
+  - template: pipelines/templates/OneBranch.shared.variables.yml@Hydra
+    parameters:
+      buildType: official
+  - template: pipelines/templates/shared_variables.yml@Hydra
+    parameters:
+      location: eastus
+      # Usually used for build number (but N/A for OneBranch).
+      pipelineShortName: OneBranch
+  - name: BlobImageRepo
+    value: "blob-csi"
+  - name: IsStaging
+    value: ${{ eq(variables['Build.SourceBranch'], 'refs/heads/staging') }}
+  - name: IsOfficial
+    value: ${{ eq(variables['ONEBRANCH_BUILD_TYPE'], 'official') }}
+
+parameters:
+  - name: acr
+    displayName: ACR for container image publish
+    type: string
+    default: hydraedge
+    values:
+      - hydraedge
+      - hydraedgecidev
+  - name: architectures
+    displayName: Architectures to build
+    type: object
+    default:
+      - amd64
+      - arm64
+
+extends:
+  template: v2/OneBranch.Official.CrossPlat.yml@templates # https://aka.ms/obpipelines/templates
+  parameters:
+    containers:
+      - container: linux_build_container
+        image: $(LinuxContainerImage)
+        type: Linux
+        endpoint: "hydraedge-acr-connection"
+
+    globalSdl: # https://aka.ms/obpipelines/sdl
+      # Details on TSA onboarding:
+      # https://onebranch.visualstudio.com/OneBranch/_wiki/wikis/OneBranch.wiki/4637/TSA-and-TSA-Onboarding-in-OneBranch-Pipelines
+      tsa:
+        enabled: false
+      credscan:
+        enabled: true
+        suppressionsFile: $(Build.SourcesDirectory)/.config/CredScanSuppressions.json
+      policheck:
+        break: true # always break the build on policheck issues. You can disable it by setting to 'false'
+    stages:
+      - template: OneBranch.body.yml@self
+        parameters:
+          acr: ${{ parameters.acr }}
+          architectures: ${{ parameters.architectures }}
+          buildType: official
+

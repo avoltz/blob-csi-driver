@@ -12,17 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+##############
+# Build binaries
+##############
+
+ARG BUILD_IMAGE
+FROM ${BUILD_IMAGE} AS build-stage
+
+WORKDIR /app
+
+ARG ARCH=amd64
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+ADD . .
+RUN make clean && make
+
+##############
+# Build CSI container
+##############
+
 FROM mcr.microsoft.com/cbl-mariner/base/core:2.0
 
 ARG ARCH=amd64
-ARG binary=./_output/${ARCH}/blobplugin
-COPY ${binary} /blobplugin
 
 RUN mkdir /blobfuse-proxy/
 
-COPY ./pkg/blobfuse-proxy/init.sh /blobfuse-proxy/
-COPY ./pkg/blobfuse-proxy/blobfuse-proxy.service /blobfuse-proxy/
-COPY ./_output/${ARCH}/blobfuse-proxy /blobfuse-proxy/
+COPY --from=build-stage /app/_output/${ARCH}/blobplugin /blobplugin
+COPY --from=build-stage /app/_output/${ARCH}/blobfuse-proxy /blobfuse-proxy/
+COPY --from=build-stage /app/pkg/blobfuse-proxy/init.sh /blobfuse-proxy/
+COPY --from=build-stage /app/pkg/blobfuse-proxy/blobfuse-proxy.service /blobfuse-proxy/
 
 RUN chmod +x /blobfuse-proxy/init.sh && \
  chmod +x /blobfuse-proxy/blobfuse-proxy.service && \
@@ -36,3 +56,4 @@ LABEL maintainers="andyzhangx"
 LABEL description="Azure Blob Storage CSI driver"
 
 ENTRYPOINT ["/blobplugin"]
+
