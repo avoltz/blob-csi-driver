@@ -1,0 +1,259 @@
+#################################################################################
+#                               OneBranch Pipelines                             #
+# This pipeline was created by EasyStart from a sample located at:              #
+#   https://aka.ms/obpipelines/easystart/samples                                #
+# Documentation:  https://aka.ms/obpipelines                                    #
+# Yaml Schema:    https://aka.ms/obpipelines/yaml/schema                        #
+# Retail Tasks:   https://aka.ms/obpipelines/tasks                              #
+# Support:        https://aka.ms/onebranchsup                                   #
+#################################################################################
+trigger: none
+
+resources:
+  repositories: 
+  - repository: templates
+    type: git
+    name: OneBranch.Pipelines/GovernedTemplates
+    ref: refs/heads/main
+  - repository: Hydra
+    clean: true
+    type: git
+    name: One/Hydra
+    ref: echairez/cross-repo-pipelines
+
+variables:
+  - template: pipelines/templates/OneBranch.repo.variables.yml@Hydra
+    parameters:
+      buildType: buddy
+  - template: pipelines/templates/shared_variables.yml@Hydra
+    parameters:
+      location: eastus
+      # Usually used for build number (but N/A for OneBranch).
+      pipelineShortName: OneBranch
+  - name: BlobImageRepo
+    value: "blob-csi"
+  - name: IsStaging
+    value: ${{ eq(variables['Build.SourceBranch'], 'refs/heads/staging') }}
+  - name: IsOfficial
+    value: ${{ eq(variables['ONEBRANCH_BUILD_TYPE'], 'official') }}
+
+parameters:
+  - name: acr
+    displayName: ACR for container image publish
+    type: string
+    default: hydraedgecidev
+    values:
+      - hydraedge
+      - hydraedgecidev
+  - name: architectures
+    displayName: Architectures to build
+    type: object
+    default:
+      - amd64
+      - arm64
+
+extends:
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@templates # https://aka.ms/obpipelines/templates
+  parameters:
+    containers:
+      - container: linux_build_container
+        image: $(LinuxContainerImage)
+        type: Linux
+        endpoint: "hydraedge-acr-connection"
+
+    globalSdl: # https://aka.ms/obpipelines/sdl
+      # tsa:
+      #  enabled: true # SDL results of non-official builds aren't uploaded to TSA by default.
+      # credscan:
+      #   suppressionsFile: $(Build.SourcesDirectory)\.config\CredScanSuppressions.json
+      policheck:
+        break: true # always break the build on policheck issues. You can disable it by setting to 'false'
+      # suppression:
+      #   suppressionFile: $(Build.SourcesDirectory)\.gdn\global.gdnsuppress
+    stages:
+      - stage: setup
+        jobs:
+          - job: Setup
+            timeoutInMinutes: 30
+            displayName: Setup
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: "$(Build.ArtifactStagingDirectory)/out"
+            steps:
+              - checkout: Hydra
+              - template: pipelines/templates/job_start.yml@Hydra
+                parameters:
+                  logInAgentUami: false
+                  uploadAdx: false
+                  installVenv: false
+                  installReportGenerator: false
+
+              - task: onebranch.pipeline.version@1
+                displayName: "Setup BuildNumber"
+                inputs:
+                  system: "RevisionCounter"
+                  major: "1"
+                  minor: "0"
+                  exclude_commit: true
+
+              - bash: |
+                  pushd Hydra
+                    scripts/setup_pipeline_variables.sh $(Build.BuildId)
+                  popd
+
+                  source BLOB_CSI_VERSION
+                  echo "##vso[task.setvariable variable=BLOB_CSI_VERSION;isOutput=true]${BLOB_CSI_VERSION}"
+                displayName: Setup environment
+                name: setupStep
+
+      - stage: build
+        dependsOn:
+          - setup
+        variables:
+          TOOLCHAIN_IMAGE: $[ stageDependencies.setup.Setup.outputs['setupStep.TOOLCHAIN_IMAGE'] ]
+          pipelineBuildTag: $[ stageDependencies.setup.Setup.outputs['setupStep.VERSION_TAG'] ]
+        jobs:
+        - ${{ each arch in parameters.architectures }}:
+          - job: build_csi_container_${{ arch }}
+            timeoutInMinutes: 60
+            displayName: Build ${{ arch }} BlobCSIImage
+            pool:
+              type: docker
+              os: linux
+              hostArchitecture: ${{ arch }}
+            variables:
+              ob_git_checkout: true
+            steps:
+              - template: pipelines/templates/job_start.yml@Hydra
+                parameters:
+                  logInAgentUami: false
+                  uploadAdx: false
+                  installVenv: false
+                  installReportGenerator: false
+
+              # We always sign in to hydraedge since it holds our runtime/toolchain
+              # images, in addition to the ACR that we'll actually put the built
+              # images in.
+              - template: pipelines/templates/acr_login.yml@Hydra
+                parameters:
+                  acr: hydraedge
+                  onebranch: true
+
+              - template: pipelines/templates/acr_login.yml@Hydra
+                parameters:
+                  acr: ${{ parameters.acr }}
+                  onebranch: true
+
+              - task: onebranch.pipeline.imagebuildinfo@1@2
+                displayName: Build blob csi ${{ arch }} image
+                inputs:
+                  dockerFileContextPath: .
+                  dockerFileRelPath: pkg/blobplugin/Dockerfile.mariner
+                  repositoryName: $(BlobImageRepo)
+                  registry: "${{ parameters.acr }}.azurecr.io"
+                  saveImageToPath: "$(BlobImageRepo)-${{ arch }}.tar"
+                  enable_network: true # We may not want to do this... but current files require it
+                  enable_acr_push: true
+                  buildkit: 1 # turn on for optimizations like caching, parallelization, new dockerfile options
+                  enable_cache: true # take advantage of multi-stage caching
+                  endpoint: "${{ parameters.acr }}-acr-connection"
+                  arguments: --build-arg ARCH=${{ arch }} --build-arg BUILD_IMAGE=$(TOOLCHAIN_IMAGE)
+                  build_tag: "$(pipelineBuildTag)-${{ arch }}"
+
+      - stage: publish
+        dependsOn:
+          - setup
+          - build
+        variables:
+          pipelineBuildTag: $[ stageDependencies.setup.Setup.outputs['setupStep.VERSION_TAG'] ]
+          blobCsiVersion: $[ stageDependencies.setup.Setup.outputs['setupStep.BLOB_CSI_VERSION'] ]
+          HYDRA_REPO_PREFIX: "artifact/$(ServiceTreeId)/$(ONEBRANCH_BUILD_TYPE)/"
+        jobs:
+          - job: PublishArtifacts
+            timeoutInMinutes: 30
+            displayName: Publish artifacts
+            pool:
+              type: linux
+              isCustom: true
+              name: $(AGENT_POOL)
+            variables:
+              ob_outputDirectory: "$(Build.SourcesDirectory)/out"
+            steps:
+              - checkout: Hydra
+              - template: pipelines/templates/job_start.yml@Hydra
+                parameters:
+                  logInAgentUami: false
+                  uploadAdx: false
+                  installVenv: false
+                  installReportGenerator: false
+
+              - template: pipelines/templates/acr_login.yml@Hydra
+                parameters:
+                  acr: ${{ parameters.acr }}
+                  onebranch: true
+
+              - template: pipelines/templates/make_images_multiarch.yml@Hydra
+                parameters:
+                  hydraRepoPrefix: "$(HYDRA_REPO_PREFIX)"
+                  acr: "${{ parameters.acr }}"
+                  architectures: ${{ parameters.architectures }}
+                  images:
+                    - $(BlobImageRepo)
+
+              - task: AzureCLI@2
+                displayName: "Check if version tag exists"
+                target: host
+                inputs:
+                  azureSubscription: $(AZURE_SERVICE_CONNECTION)
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    image="$(HYDRA_REPO_PREFIX)$(BlobImageRepo):$(blobCsiVersion)"
+
+                    if ! az acr repository show -n "${{ parameters.acr }}" --image "$image" &>2 ; then
+                      echo "##vso[task.setvariable variable=pushLatest;isOutput=true]true"
+                    else
+                      echo "##vso[task.setvariable variable=pushLatest;isOutput=true]false"
+                    fi
+                name: csi_version
+                condition: and(eq(variables.IsOfficial, 'True'), eq(variables.IsStaging, 'True'))
+
+          - job: PublishLatest
+            condition: |
+              and(
+              eq(variables.IsOfficial, 'True'),
+              eq(variables.IsStaging, 'True'),
+              eq(dependencies.PublishArtifacts.outputs['csi_version.pushLatest'], 'true'))
+            dependsOn: PublishArtifacts
+            timeoutInMinutes: 30
+            displayName: Publish latest container image
+            pool:
+              type: linux
+              isCustom: true
+              name: $(AGENT_POOL)
+            variables:
+              ob_outputDirectory: "$(Build.SourcesDirectory)/out"
+            steps:
+              - checkout: Hydra
+              - template: pipelines/templates/job_start.yml@Hydra
+                parameters:
+                  logInAgentUami: false
+                  uploadAdx: false
+                  installVenv: false
+                  installReportGenerator: false
+
+              - template: pipelines/templates/acr_login.yml@Hydra
+                parameters:
+                  acr: ${{ parameters.acr }}
+                  onebranch: true
+
+              - template: pipelines/templates/make_images_latest.yml@Hydra
+                parameters:
+                  hydraRepoPrefix: "$(HYDRA_REPO_PREFIX)"
+                  acr: "${{ parameters.acr }}"
+                  dstBuildTag: "$(blobCsiVersion)"
+                  srcBuildTag: "$(pipelineBuildTag)"
+                  images:
+                    - $(BlobImageRepo)
+
