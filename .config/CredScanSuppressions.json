@@ -1,0 +1,13 @@
+{
+   "tool": "Credential Scanner",
+   "suppressions": [
+     {
+       "file": "test/utils/credentials/credentials.go",
+       "_justification": "False positive variable."
+     },
+     {
+       "file": "vendor/k8s.io/kubernetes/test/utils/admission_webhook.go",
+       "_justification": "An example certificate with command to create it to go along with it."
+     }
+   ]
+}
