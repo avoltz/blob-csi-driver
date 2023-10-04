@@ -19,7 +19,7 @@ resources:
     clean: true
     type: git
     name: One/Hydra
-    ref: echairez/cross-repo-pipelines
+    ref: main
 
 variables:
   - template: pipelines/templates/OneBranch.shared.variables.yml@Hydra
