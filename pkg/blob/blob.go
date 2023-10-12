@@ -289,6 +289,7 @@ func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
 	klog.V(2).Infof("driver userAgent: %s", userAgent)
 	d.cloud, err = getCloudProvider(kubeconfig, d.NodeID, d.cloudConfigSecretName, d.cloudConfigSecretNamespace, userAgent, d.allowEmptyCloudConfig, d.kubeAPIQPS, d.kubeAPIBurst)
 	if err != nil {
+		csicommon.SendKubeEvent(v1.EventTypeWarning, csicommon.FailedToInitializeDriver, csicommon.CSIEventSourceStr, fmt.Sprintf("failed to get Azure Cloud Provider, error: %v", err))
 		klog.Fatalf("failed to get Azure Cloud Provider, error: %v", err)
 	}
 	klog.V(2).Infof("cloud: %s, location: %s, rg: %s, VnetName: %s, VnetResourceGroup: %s, SubnetName: %s", d.cloud.Cloud, d.cloud.Location, d.cloud.ResourceGroup, d.cloud.VnetName, d.cloud.VnetResourceGroup, d.cloud.SubnetName)

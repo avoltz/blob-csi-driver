@@ -28,10 +28,10 @@ RUN chmod +x /blobfuse-proxy/init.sh && \
  chmod +x /blobfuse-proxy/blobfuse-proxy.service && \
  chmod +x /blobfuse-proxy/blobfuse-proxy
 
-# Currently no CBL-Mariner image with fix for "curl" CVE-2023-38545/CVE-2023-38546.
-# So, temporarily do update here. Remove "curl" when image is updated.
+# Currently no CBL-Mariner image with fix for "curl"/"zlib" CVE-2023-38545/CVE-2023-38546/CVE-2023-45853.
+# So, temporarily do update here. Remove "curl"/"zlib" when image is updated.
 RUN tdnf updateinfo && \
-    tdnf install -y util-linux e2fsprogs nfs-utils quota-rpc rpcbind blobfuse2 fuse3 libcap-ng libcap ca-certificates curl && \
+    tdnf install -y util-linux e2fsprogs nfs-utils quota-rpc rpcbind blobfuse2 fuse3 libcap-ng libcap ca-certificates curl zlib && \
     tdnf clean all
 
 LABEL maintainers="andyzhangx"

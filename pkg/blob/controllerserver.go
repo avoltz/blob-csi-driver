@@ -35,10 +35,12 @@ import (
 	azstorage "github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
 
+	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	"sigs.k8s.io/cloud-provider-azure/pkg/metrics"
@@ -427,6 +429,9 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		}
 	} else {
 		klog.V(2).Infof("begin to create container(%s) on account(%s) type(%s) subsID(%s) rg(%s) location(%s) size(%d)", validContainerName, accountName, storageAccountType, subsID, resourceGroup, location, requestGiB)
+		csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.CreatingBlobContainer, csicommon.CSIEventSourceStr,
+			fmt.Sprintf("Controller CreateVolume: Creating blob container %s in %q storage account", validContainerName, accountName))
+
 		if err := d.CreateBlobContainer(ctx, subsID, resourceGroup, accountName, validContainerName, secrets); err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to create container(%s) on account(%s) type(%s) rg(%s) location(%s) size(%d), error: %v", validContainerName, accountName, storageAccountType, resourceGroup, location, requestGiB, err)
 		}
@@ -455,7 +460,9 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		uuid = volName
 	}
 	volumeID = fmt.Sprintf(volumeIDTemplate, resourceGroup, accountName, validContainerName, uuid, secretNamespace, subsID)
-	klog.V(2).Infof("create container %s on storage account %s successfully", validContainerName, accountName)
+	klog.V(2).Infof("created container %s on storage account %s successfully", validContainerName, accountName)
+	csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.CreatedBlobContainer, csicommon.CSIEventSourceStr,
+		fmt.Sprintf("Controller CreateVolume: Created blob container %s in %q storage account", validContainerName, accountName))
 
 	if useDataPlaneAPI {
 		d.dataPlaneAPIVolCache.Set(volumeID, "")
@@ -519,12 +526,16 @@ func (d *Driver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest)
 		resourceGroupName = d.cloud.ResourceGroup
 	}
 	klog.V(2).Infof("deleting container(%s) rg(%s) account(%s) volumeID(%s)", containerName, resourceGroupName, accountName, volumeID)
+	csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.DeletingBlobContainer, csicommon.CSIEventSourceStr,
+		fmt.Sprintf("Controller DeleteVolume: Deleting container %s from %q storage account", containerName, accountName))
 	if err := d.DeleteBlobContainer(ctx, subsID, resourceGroupName, accountName, containerName, secrets); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to delete container(%s) under rg(%s) account(%s) volumeID(%s), error: %v", containerName, resourceGroupName, accountName, volumeID, err)
 	}
 
 	isOperationSucceeded = true
 	klog.V(2).Infof("container(%s) under rg(%s) account(%s) volumeID(%s) is deleted successfully", containerName, resourceGroupName, accountName, volumeID)
+	csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.DeletedBlobContainer, csicommon.CSIEventSourceStr,
+		fmt.Sprintf("Controller DeleteVolume: Deleted container %s from %q storage account", containerName, accountName))
 	return &csi.DeleteVolumeResponse{}, nil
 }
 
