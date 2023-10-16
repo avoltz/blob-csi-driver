@@ -73,10 +73,12 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		parameters = make(map[string]string)
 	}
 	var storageAccountType, subsID, resourceGroup, location, account, containerName, containerNamePrefix, protocol, customTags, secretName, secretNamespace, pvcNamespace string
-	var isHnsEnabled, requireInfraEncryption, enableBlobVersioning *bool
+	var isHnsEnabled, requireInfraEncryption, enableBlobVersioning, createPrivateEndpoint, enableNfsV3 *bool
 	var vnetResourceGroup, vnetName, subnetName, accessTier, networkEndpointType, storageEndpointSuffix string
-	var matchTags, useDataPlaneAPI bool
+	var matchTags, useDataPlaneAPI, getLatestAccountKey bool
 	var softDeleteBlobs, softDeleteContainers int32
+	var vnetResourceIDs []string
+	var err error
 	// set allowBlobPublicAccess as false by default
 	allowBlobPublicAccess := pointer.Bool(false)
 
@@ -137,6 +139,10 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			if strings.EqualFold(v, falseValue) {
 				storeAccountKey = false
 			}
+		case getLatestAccountKeyField:
+			if getLatestAccountKey, err = strconv.ParseBool(v); err != nil {
+				return nil, status.Errorf(codes.InvalidArgument, "invalid %s: %s in volume context", getLatestAccountKeyField, v)
+			}
 		case allowBlobPublicAccessField:
 			if strings.EqualFold(v, trueValue) {
 				allowBlobPublicAccess = pointer.Bool(true)
@@ -153,6 +159,12 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		case pvNameKey:
 			containerNameReplaceMap[pvNameMetadata] = v
 		case serverNameField:
+		case storageAuthTypeField:
+		case storageIentityClientIDField:
+		case storageIdentityObjectIDField:
+		case storageIdentityResourceIDField:
+		case msiEndpointField:
+		case storageAADEndpointField:
 			// no op, only used in NodeStageVolume
 		case storageEndpointSuffixField:
 			storageEndpointSuffix = v
@@ -235,21 +247,16 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	}
 
 	enableHTTPSTrafficOnly := true
-	createPrivateEndpoint := false
 	if strings.EqualFold(networkEndpointType, privateEndpoint) {
-		createPrivateEndpoint = true
+		createPrivateEndpoint = pointer.BoolPtr(true)
 	}
 	accountKind := string(storage.KindStorageV2)
-	var (
-		vnetResourceIDs []string
-		enableNfsV3     *bool
-	)
 	if protocol == NFS {
 		isHnsEnabled = pointer.Bool(true)
 		enableNfsV3 = pointer.Bool(true)
 		// NFS protocol does not need account key
 		storeAccountKey = false
-		if !createPrivateEndpoint {
+		if !pointer.BoolDeref(createPrivateEndpoint, false) {
 			// set VirtualNetworkResourceIDs for storage account firewall setting
 			vnetResourceID := d.getSubnetResourceID(vnetResourceGroup, vnetName, subnetName)
 			klog.V(2).Infof("set vnetResourceID(%s) for NFS protocol", vnetResourceID)
@@ -308,7 +315,15 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		EnableBlobVersioning:            enableBlobVersioning,
 		SoftDeleteBlobs:                 softDeleteBlobs,
 		SoftDeleteContainers:            softDeleteContainers,
+		GetLatestAccountKey:             getLatestAccountKey,
 	}
+
+	var volumeID string
+	mc := metrics.NewMetricContext(blobCSIDriverName, "controller_create_volume", d.cloud.ResourceGroup, d.cloud.SubscriptionID, d.Name)
+	isOperationSucceeded := false
+	defer func() {
+		mc.ObserveOperationWithResult(isOperationSucceeded, VolumeID, volumeID)
+	}()
 
 	var accountKey string
 	accountName := account
@@ -317,7 +332,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		if v, ok := d.volMap.Load(volName); ok {
 			accountName = v.(string)
 		} else {
-			lockKey := fmt.Sprintf("%s%s%s%s%s%v", storageAccountType, accountKind, resourceGroup, location, protocol, createPrivateEndpoint)
+			lockKey := fmt.Sprintf("%s%s%s%s%s%v", storageAccountType, accountKind, resourceGroup, location, protocol, pointer.BoolDeref(createPrivateEndpoint, false))
 			// search in cache first
 			cache, err := d.accountSearchCache.Get(lockKey, azcache.CacheReadTypeDefault)
 			if err != nil {
@@ -346,7 +361,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		}
 	}
 
-	if createPrivateEndpoint && protocol == NFS {
+	if pointer.BoolDeref(createPrivateEndpoint, false) && protocol == NFS {
 		// As for blobfuse/blobfuse2, serverName, i.e.,AZURE_STORAGE_BLOB_ENDPOINT env variable can't include
 		// "privatelink", issue: https://github.com/Azure/azure-storage-fuse/issues/1014
 		//
@@ -377,13 +392,6 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		validContainerName = getValidContainerName(validContainerName, protocol)
 		setKeyValueInMap(parameters, containerNameField, validContainerName)
 	}
-
-	var volumeID string
-	mc := metrics.NewMetricContext(blobCSIDriverName, "controller_create_volume", d.cloud.ResourceGroup, d.cloud.SubscriptionID, d.Name)
-	isOperationSucceeded := false
-	defer func() {
-		mc.ObserveOperationWithResult(isOperationSucceeded, VolumeID, volumeID)
-	}()
 
 	klog.V(2).Infof("begin to create container(%s) on account(%s) type(%s) subsID(%s) rg(%s) location(%s) size(%d)", validContainerName, accountName, storageAccountType, subsID, resourceGroup, location, requestGiB)
 	if err := d.CreateBlobContainer(ctx, subsID, resourceGroup, accountName, validContainerName, secrets); err != nil {

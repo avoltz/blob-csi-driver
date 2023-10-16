@@ -95,7 +95,7 @@ spec:
     driver: blob.csi.azure.com
     readOnly: false
     # make sure volumeid is unique for every storage blob container in the cluster
-    # the # character is reserved for internal use
+    # the # character is reserved for internal use, the / character is not allowed
     volumeHandle: account-name_container-name
     volumeAttributes:
       containerName: EXISTING_CONTAINER_NAME
@@ -134,9 +134,8 @@ blobfuse         14G   41M   13G   1% /mnt/blob
 In the above example, there is a `/mnt/blob` directory mounted as `blobfuse` filesystem.
 
 #### Option#3: Inline volume
- > only available from `v1.2.0` for blobfuse protocol (NFS protocol is not supported)
- - Create `azure-secret` with existing storage account name and key in the same namespace as pod
- > in below example, both secret and pod are in `default` namespace
+ > to avoid performance issue, use persistent volume instead of inline volume when numerous pods are accessing the same volume.
+ - in below blobfuse mount example, create `azure-secret` with existing storage account name and key in the same namespace as pod, both secret and pod are in `default` namespace
 ```console
 kubectl create secret generic azure-secret --from-literal azurestorageaccountname=NAME --from-literal azurestorageaccountkey="KEY" --type=Opaque
 ```

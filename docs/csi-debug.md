@@ -81,7 +81,7 @@ change below deployment config, e.g.
 blobfuse2 -v
 ```
 <pre>
-blobfuse2 version 2.0.3
+blobfuse2 version 2.1.0
 </pre>
 
 ### check blobfuse mount on the agent node
@@ -102,7 +102,7 @@ export AZURE_STORAGE_ACCOUNT=
 export AZURE_STORAGE_ACCESS_KEY=
 # only for sovereign cloud
 # export AZURE_STORAGE_BLOB_ENDPOINT=accountname.blob.core.chinacloudapi.cn
-blobfuse test --container-name=CONTAINER-NAME --tmp-path=/tmp/blobfuse -o allow_other --file-cache-timeout-in-seconds=120
+blobfuse2 test --container-name=CONTAINER-NAME --tmp-path=/tmp/blobfuse -o allow_other --file-cache-timeout-in-seconds=120
 ```
 > You can find more detailed information about environment variables at https://github.com/Azure/azure-storage-fuse#environment-variables.
 

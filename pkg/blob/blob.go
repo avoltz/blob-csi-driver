@@ -19,6 +19,7 @@ package blob
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,64 +49,72 @@ import (
 
 const (
 	// DefaultDriverName holds the name of the csi-driver
-	DefaultDriverName            = "blob.csi.azure.com"
-	blobCSIDriverName            = "blob_csi_driver"
-	separator                    = "#"
-	volumeIDTemplate             = "%s#%s#%s#%s#%s#%s"
-	secretNameTemplate           = "azure-storage-account-%s-secret"
-	serverNameField              = "server"
-	storageEndpointSuffixField   = "storageendpointsuffix"
-	tagsField                    = "tags"
-	matchTagsField               = "matchtags"
-	protocolField                = "protocol"
-	accountNameField             = "accountname"
-	accountKeyField              = "accountkey"
-	storageAccountField          = "storageaccount"
-	storageAccountTypeField      = "storageaccounttype"
-	skuNameField                 = "skuname"
-	subscriptionIDField          = "subscriptionid"
-	resourceGroupField           = "resourcegroup"
-	locationField                = "location"
-	secretNameField              = "secretname"
-	secretNamespaceField         = "secretnamespace"
-	containerNameField           = "containername"
-	containerNamePrefixField     = "containernameprefix"
-	storeAccountKeyField         = "storeaccountkey"
-	isHnsEnabledField            = "ishnsenabled"
-	softDeleteBlobsField         = "softdeleteblobs"
-	softDeleteContainersField    = "softdeletecontainers"
-	enableBlobVersioningField    = "enableblobversioning"
-	getAccountKeyFromSecretField = "getaccountkeyfromsecret"
-	storageSPNClientIDField      = "azurestoragespnclientid"
-	storageSPNTenantIDField      = "azurestoragespntenantid"
-	keyVaultURLField             = "keyvaulturl"
-	keyVaultSecretNameField      = "keyvaultsecretname"
-	keyVaultSecretVersionField   = "keyvaultsecretversion"
-	storageAccountNameField      = "storageaccountname"
-	allowBlobPublicAccessField   = "allowblobpublicaccess"
-	requireInfraEncryptionField  = "requireinfraencryption"
-	ephemeralField               = "csi.storage.k8s.io/ephemeral"
-	podNamespaceField            = "csi.storage.k8s.io/pod.namespace"
-	mountOptionsField            = "mountoptions"
-	falseValue                   = "false"
-	trueValue                    = "true"
-	defaultSecretAccountName     = "azurestorageaccountname"
-	defaultSecretAccountKey      = "azurestorageaccountkey"
-	accountSasTokenField         = "azurestorageaccountsastoken"
-	msiSecretField               = "msisecret"
-	storageSPNClientSecretField  = "azurestoragespnclientsecret"
-	EcProtocol                   = "edgecache"
-	Fuse                         = "fuse"
-	Fuse2                        = "fuse2"
-	NFS                          = "nfs"
-	vnetResourceGroupField       = "vnetresourcegroup"
-	vnetNameField                = "vnetname"
-	subnetNameField              = "subnetname"
-	accessTierField              = "accesstier"
-	networkEndpointTypeField     = "networkendpointtype"
-	mountPermissionsField        = "mountpermissions"
-	useDataPlaneAPIField         = "usedataplaneapi"
-	EcStrgAuthenticationField    = "edgecache-storage-auth"
+	DefaultDriverName              = "blob.csi.azure.com"
+	blobCSIDriverName              = "blob_csi_driver"
+	separator                      = "#"
+	volumeIDTemplate               = "%s#%s#%s#%s#%s#%s"
+	secretNameTemplate             = "azure-storage-account-%s-secret"
+	serverNameField                = "server"
+	storageEndpointSuffixField     = "storageendpointsuffix"
+	tagsField                      = "tags"
+	matchTagsField                 = "matchtags"
+	protocolField                  = "protocol"
+	accountNameField               = "accountname"
+	accountKeyField                = "accountkey"
+	storageAccountField            = "storageaccount"
+	storageAccountTypeField        = "storageaccounttype"
+	skuNameField                   = "skuname"
+	subscriptionIDField            = "subscriptionid"
+	resourceGroupField             = "resourcegroup"
+	locationField                  = "location"
+	secretNameField                = "secretname"
+	secretNamespaceField           = "secretnamespace"
+	containerNameField             = "containername"
+	containerNamePrefixField       = "containernameprefix"
+	storeAccountKeyField           = "storeaccountkey"
+	isHnsEnabledField              = "ishnsenabled"
+	softDeleteBlobsField           = "softdeleteblobs"
+	softDeleteContainersField      = "softdeletecontainers"
+	enableBlobVersioningField      = "enableblobversioning"
+	getAccountKeyFromSecretField   = "getaccountkeyfromsecret"
+	storageSPNClientIDField        = "azurestoragespnclientid"
+	storageSPNTenantIDField        = "azurestoragespntenantid"
+	keyVaultURLField               = "keyvaulturl"
+	keyVaultSecretNameField        = "keyvaultsecretname"
+	keyVaultSecretVersionField     = "keyvaultsecretversion"
+	storageAccountNameField        = "storageaccountname"
+	allowBlobPublicAccessField     = "allowblobpublicaccess"
+	requireInfraEncryptionField    = "requireinfraencryption"
+	ephemeralField                 = "csi.storage.k8s.io/ephemeral"
+	podNamespaceField              = "csi.storage.k8s.io/pod.namespace"
+	mountOptionsField              = "mountoptions"
+	falseValue                     = "false"
+	trueValue                      = "true"
+	defaultSecretAccountName       = "azurestorageaccountname"
+	defaultSecretAccountKey        = "azurestorageaccountkey"
+	accountSasTokenField           = "azurestorageaccountsastoken"
+	msiSecretField                 = "msisecret"
+	storageSPNClientSecretField    = "azurestoragespnclientsecret"
+	EcProtocol                     = "edgecache"
+	Fuse                           = "fuse"
+	Fuse2                          = "fuse2"
+	NFS                            = "nfs"
+	AZNFS                          = "aznfs"
+	vnetResourceGroupField         = "vnetresourcegroup"
+	vnetNameField                  = "vnetname"
+	subnetNameField                = "subnetname"
+	accessTierField                = "accesstier"
+	networkEndpointTypeField       = "networkendpointtype"
+	mountPermissionsField          = "mountpermissions"
+	useDataPlaneAPIField           = "usedataplaneapi"
+	EcStrgAuthenticationField      = "edgecache-storage-auth"
+	getLatestAccountKeyField       = "getlatestaccountkey"
+	storageAuthTypeField           = "azurestorageauthtype"
+	storageIentityClientIDField    = "azurestorageidentityclientid"
+	storageIdentityObjectIDField   = "azurestorageidentityobjectid"
+	storageIdentityResourceIDField = "azurestorageidentityresourceid"
+	msiEndpointField               = "msiendpoint"
+	storageAADEndpointField        = "azurestorageaadendpoint"
 
 	// See https://docs.microsoft.com/en-us/rest/api/storageservices/naming-and-referencing-containers--blobs--and-metadata#container-names
 	containerNameMinLength = 3
@@ -167,6 +176,8 @@ type DriverOptions struct {
 	MountPermissions                       uint64
 	KubeAPIQPS                             float64
 	KubeAPIBurst                           int
+	EnableAznfsMount                       bool
+	VolStatsCacheExpireInMinutes           int
 }
 
 // Driver implements all interfaces of CSI drivers
@@ -193,6 +204,7 @@ type Driver struct {
 	edgeCacheManager                       *edgecache.Manager
 	kubeAPIQPS                             float64
 	kubeAPIBurst                           int
+	enableAznfsMount                       bool
 	mounter                                *mount.SafeFormatAndMount
 	volLockMap                             *util.LockMap
 	// A map storing all volumes with ongoing operations so that additional operations
@@ -203,9 +215,11 @@ type Driver struct {
 	// a map storing all volumes created by this driver <volumeName, accountName>
 	volMap sync.Map
 	// a timed cache storing all volumeIDs and storage accounts that are using data plane API
-	dataPlaneAPIVolCache *azcache.TimedCache
+	dataPlaneAPIVolCache azcache.Resource
 	// a timed cache storing account search history (solve account list throttling issue)
-	accountSearchCache *azcache.TimedCache
+	accountSearchCache azcache.Resource
+	// a timed cache storing volume stats <volumeID, volumeStats>
+	volStatsCache azcache.Resource
 }
 
 // NewDriver Creates a NewCSIDriver object. Assumes vendor version is equal to driver version &
@@ -232,6 +246,7 @@ func NewDriver(options *DriverOptions) *Driver {
 		mountPermissions:                       options.MountPermissions,
 		kubeAPIQPS:                             options.KubeAPIQPS,
 		kubeAPIBurst:                           options.KubeAPIBurst,
+		enableAznfsMount:                       options.EnableAznfsMount,
 	}
 	d.Name = options.DriverName
 	d.Version = driverVersion
@@ -239,10 +254,17 @@ func NewDriver(options *DriverOptions) *Driver {
 
 	var err error
 	getter := func(key string) (interface{}, error) { return nil, nil }
-	if d.accountSearchCache, err = azcache.NewTimedcache(time.Minute, getter); err != nil {
+	if d.accountSearchCache, err = azcache.NewTimedCache(time.Minute, getter, false); err != nil {
 		klog.Fatalf("%v", err)
 	}
-	if d.dataPlaneAPIVolCache, err = azcache.NewTimedcache(10*time.Minute, getter); err != nil {
+	if d.dataPlaneAPIVolCache, err = azcache.NewTimedCache(10*time.Minute, getter, false); err != nil {
+		klog.Fatalf("%v", err)
+	}
+
+	if options.VolStatsCacheExpireInMinutes <= 0 {
+		options.VolStatsCacheExpireInMinutes = 10 // default expire in 10 minutes
+	}
+	if d.volStatsCache, err = azcache.NewTimedCache(time.Duration(options.VolStatsCacheExpireInMinutes)*time.Minute, getter, false); err != nil {
 		klog.Fatalf("%v", err)
 	}
 	return &d
@@ -392,6 +414,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 		azureStorageAuthType    string
 		authEnv                 []string
 		getAccountKeyFromSecret bool
+		getLatestAccountKey     bool
 	)
 
 	for k, v := range attrib {
@@ -420,23 +443,27 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 			pvcNamespace = v
 		case getAccountKeyFromSecretField:
 			getAccountKeyFromSecret = strings.EqualFold(v, trueValue)
-		case "azurestorageauthtype":
+		case storageAuthTypeField:
 			azureStorageAuthType = v
 			authEnv = append(authEnv, "AZURE_STORAGE_AUTH_TYPE="+v)
-		case "azurestorageidentityclientid":
+		case storageIentityClientIDField:
 			authEnv = append(authEnv, "AZURE_STORAGE_IDENTITY_CLIENT_ID="+v)
-		case "azurestorageidentityobjectid":
+		case storageIdentityObjectIDField:
 			authEnv = append(authEnv, "AZURE_STORAGE_IDENTITY_OBJECT_ID="+v)
-		case "azurestorageidentityresourceid":
+		case storageIdentityResourceIDField:
 			authEnv = append(authEnv, "AZURE_STORAGE_IDENTITY_RESOURCE_ID="+v)
-		case "msiendpoint":
+		case msiEndpointField:
 			authEnv = append(authEnv, "MSI_ENDPOINT="+v)
 		case storageSPNClientIDField:
 			storageSPNClientID = v
 		case storageSPNTenantIDField:
 			storageSPNTenantID = v
-		case "azurestorageaadendpoint":
+		case storageAADEndpointField:
 			authEnv = append(authEnv, "AZURE_STORAGE_AAD_ENDPOINT="+v)
+		case getLatestAccountKeyField:
+			if getLatestAccountKey, err = strconv.ParseBool(v); err != nil {
+				return rgName, accountName, accountKey, containerName, secretName, secretNamespace, authEnv, fmt.Errorf("invalid %s: %s in volume context", getLatestAccountKeyField, v)
+			}
 		}
 	}
 	klog.V(2).Infof("volumeID(%s) authEnv: %s", volumeID, authEnv)
@@ -496,7 +523,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 				if err != nil && !getAccountKeyFromSecret && (azureStorageAuthType == "" || strings.EqualFold(azureStorageAuthType, "key")) {
 					klog.V(2).Infof("get account(%s) key from secret(%s, %s) failed with error: %v, use cluster identity to get account key instead",
 						accountName, secretNamespace, secretName, err)
-					accountKey, err = d.cloud.GetStorageAccesskey(ctx, subsID, accountName, rgName)
+					accountKey, err = d.cloud.GetStorageAccesskey(ctx, subsID, accountName, rgName, getLatestAccountKey)
 					if err != nil {
 						return rgName, accountName, accountKey, containerName, secretName, secretNamespace, authEnv, fmt.Errorf("no key for storage account(%s) under resource group(%s), err %w", accountName, rgName, err)
 					}
@@ -578,6 +605,7 @@ func (d *Driver) GetStorageAccountAndContainer(ctx context.Context, volumeID str
 		keyVaultURL           string
 		keyVaultSecretName    string
 		keyVaultSecretVersion string
+		getLatestAccountKey   bool
 		err                   error
 	)
 
@@ -597,6 +625,10 @@ func (d *Driver) GetStorageAccountAndContainer(ctx context.Context, volumeID str
 			accountName = v
 		case storageAccountNameField: // for compatibility
 			accountName = v
+		case getLatestAccountKeyField:
+			if getLatestAccountKey, err = strconv.ParseBool(v); err != nil {
+				return "", "", "", "", fmt.Errorf("invalid %s: %s in volume context", getLatestAccountKeyField, v)
+			}
 		}
 	}
 
@@ -625,7 +657,7 @@ func (d *Driver) GetStorageAccountAndContainer(ctx context.Context, volumeID str
 				rgName = d.cloud.ResourceGroup
 			}
 
-			accountKey, err = d.cloud.GetStorageAccesskey(ctx, subsID, accountName, rgName)
+			accountKey, err = d.cloud.GetStorageAccesskey(ctx, subsID, accountName, rgName, getLatestAccountKey)
 			if err != nil {
 				return "", "", "", "", fmt.Errorf("no key for storage account(%s) under resource group(%s), err %w", accountName, rgName, err)
 			}
@@ -721,10 +753,10 @@ func getStorageAccount(secrets map[string]string) (string, string, error) {
 	}
 
 	if accountName == "" {
-		return accountName, accountKey, fmt.Errorf("could not find %s or %s field secrets(%v)", accountNameField, defaultSecretAccountName, secrets)
+		return accountName, accountKey, fmt.Errorf("could not find %s or %s field in secrets", accountNameField, defaultSecretAccountName)
 	}
 	if accountKey == "" {
-		return accountName, accountKey, fmt.Errorf("could not find %s or %s field in secrets(%v)", accountKeyField, defaultSecretAccountKey, secrets)
+		return accountName, accountKey, fmt.Errorf("could not find %s or %s field in secrets", accountKeyField, defaultSecretAccountKey)
 	}
 
 	accountName = strings.TrimSpace(accountName)
@@ -795,7 +827,7 @@ func (d *Driver) GetStorageAccesskey(ctx context.Context, accountOptions *azure.
 	_, accountKey, _, _, _, _, _, err := d.GetInfoFromSecret(ctx, secretName, secretNamespace) //nolint
 	if err != nil {
 		klog.V(2).Infof("could not get account(%s) key from secret(%s) namespace(%s), error: %v, use cluster identity to get account key instead", accountOptions.Name, secretName, secretNamespace, err)
-		accountKey, err = d.cloud.GetStorageAccesskey(ctx, accountOptions.SubscriptionID, accountOptions.Name, accountOptions.ResourceGroup)
+		accountKey, err = d.cloud.GetStorageAccesskey(ctx, accountOptions.SubscriptionID, accountOptions.Name, accountOptions.ResourceGroup, accountOptions.GetLatestAccountKey)
 	}
 	return accountOptions.Name, accountKey, err
 }
@@ -820,7 +852,7 @@ func (d *Driver) GetInfoFromSecret(ctx context.Context, secretName, secretNamesp
 	spnClientID := strings.TrimSpace(string(secret.Data[storageSPNClientIDField][:]))
 	spnTenantID := strings.TrimSpace(string(secret.Data[storageSPNTenantIDField][:]))
 
-	klog.V(4).Infof("got storage account(%s) from secret", accountName)
+	klog.V(4).Infof("got storage account(%s) from secret(%s) namespace(%s)", accountName, secretName, secretNamespace)
 	return accountName, accountKey, accountSasToken, msiSecret, spnClientSecret, spnClientID, spnTenantID, nil
 }
 
