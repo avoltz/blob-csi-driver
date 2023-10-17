@@ -29,7 +29,7 @@ RUN chmod +x /blobfuse-proxy/init.sh && \
  chmod +x /blobfuse-proxy/blobfuse-proxy
 
 RUN tdnf updateinfo && \
-    tdnf install -y util-linux e2fsprogs nfs-utils quota-rpc rpcbind blobfuse2 fuse3 libcap-ng libcap ca-certificates && \
+    tdnf install -y util-linux e2fsprogs nfs-utils quota-rpc rpcbind blobfuse2 fuse3 libcap-ng libcap ca-certificates curl && \
     tdnf clean all
 
 LABEL maintainers="andyzhangx"
