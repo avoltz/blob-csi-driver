@@ -61,6 +61,7 @@ func NewFakeDriver() *Driver {
 	driver.Name = fakeDriverName
 	driver.Version = vendorVersion
 	driver.subnetLockMap = util.NewLockMap()
+	driver.cloud = &azure.Cloud{}
 	return driver
 }
 
@@ -92,6 +93,8 @@ func TestNewDriver(t *testing.T) {
 	fakedriver.Version = driverVersion
 	fakedriver.accountSearchCache = driver.accountSearchCache
 	fakedriver.dataPlaneAPIVolCache = driver.dataPlaneAPIVolCache
+	fakedriver.volStatsCache = driver.volStatsCache
+	fakedriver.cloud = driver.cloud
 	assert.Equal(t, driver, fakedriver)
 }
 
@@ -553,6 +556,37 @@ func TestGetAuthEnv(t *testing.T) {
 			},
 		},
 		{
+			name: "invalid getLatestAccountKey value",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				attrib := map[string]string{
+					getLatestAccountKeyField: "invalid",
+				}
+				secret := make(map[string]string)
+				volumeID := "rg#f5713de20cde511e8ba4900#pvc-fuse-dynamic-17e43f84-f474-11e8-acd0-000d3a00df41"
+				d.cloud = &azure.Cloud{}
+				ctrl := gomock.NewController(t)
+				defer ctrl.Finish()
+				mockStorageAccountsClient := mockstorageaccountclient.NewMockInterface(ctrl)
+				d.cloud.StorageAccountClient = mockStorageAccountsClient
+				s := "unit-test"
+				accountkey := storage.AccountKey{
+					Value: &s,
+				}
+				accountkeylist := []storage.AccountKey{}
+				accountkeylist = append(accountkeylist, accountkey)
+				list := storage.AccountListKeysResult{
+					Keys: &accountkeylist,
+				}
+				mockStorageAccountsClient.EXPECT().ListKeys(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(list, nil).AnyTimes()
+				_, _, _, _, _, err := d.GetAuthEnv(context.TODO(), volumeID, "", attrib, secret)
+				expectedErr := fmt.Errorf("invalid getlatestaccountkey: %s in volume context", "invalid")
+				if !reflect.DeepEqual(err, expectedErr) {
+					t.Errorf("actualErr: (%v), expectedErr: (%v)", err, expectedErr)
+				}
+			},
+		},
+		{
 			name: "secret not empty",
 			testFunc: func(t *testing.T) {
 				d := NewFakeDriver()
@@ -721,6 +755,37 @@ func TestGetStorageAccountAndContainer(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "invalid getLatestAccountKey value",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				attrib := map[string]string{
+					getLatestAccountKeyField: "invalid",
+				}
+				secret := make(map[string]string)
+				volumeID := "rg#f5713de20cde511e8ba4900#pvc-fuse-dynamic-17e43f84-f474-11e8-acd0-000d3a00df41"
+				d.cloud = &azure.Cloud{}
+				ctrl := gomock.NewController(t)
+				defer ctrl.Finish()
+				mockStorageAccountsClient := mockstorageaccountclient.NewMockInterface(ctrl)
+				d.cloud.StorageAccountClient = mockStorageAccountsClient
+				s := "unit-test"
+				accountkey := storage.AccountKey{
+					Value: &s,
+				}
+				accountkeylist := []storage.AccountKey{}
+				accountkeylist = append(accountkeylist, accountkey)
+				list := storage.AccountListKeysResult{
+					Keys: &accountkeylist,
+				}
+				mockStorageAccountsClient.EXPECT().ListKeys(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(list, nil).AnyTimes()
+				_, _, _, _, err := d.GetStorageAccountAndContainer(context.TODO(), volumeID, attrib, secret)
+				expectedErr := fmt.Errorf("invalid getlatestaccountkey: %s in volume context", "invalid")
+				if !reflect.DeepEqual(err, expectedErr) {
+					t.Errorf("actualErr: (%v), expectedErr: (%v)", err, expectedErr)
+				}
+			},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, tc.testFunc)
@@ -779,31 +844,31 @@ func TestGetStorageAccount(t *testing.T) {
 			},
 			expectedAccountName: "",
 			expectedAccountKey:  "",
-			expectedError:       fmt.Errorf("could not find accountname or azurestorageaccountname field secrets(map[accountname: accountkey:])"),
+			expectedError:       fmt.Errorf("could not find accountname or azurestorageaccountname field"),
 		},
 		{
 			options:             emptyAccountKeyMap,
 			expectedAccountName: "testaccount",
 			expectedAccountKey:  "",
-			expectedError:       fmt.Errorf("could not find accountkey or azurestorageaccountkey field in secrets(%v)", emptyAccountKeyMap),
+			expectedError:       fmt.Errorf("could not find accountkey or azurestorageaccountkey field in secrets"),
 		},
 		{
 			options:             emptyAccountNameMap,
 			expectedAccountName: "",
 			expectedAccountKey:  "testkey",
-			expectedError:       fmt.Errorf("could not find accountname or azurestorageaccountname field secrets(%v)", emptyAccountNameMap),
+			expectedError:       fmt.Errorf("could not find accountname or azurestorageaccountname field in secrets"),
 		},
 		{
 			options:             emptyAzureAccountKeyMap,
 			expectedAccountName: "testaccount",
 			expectedAccountKey:  "",
-			expectedError:       fmt.Errorf("could not find accountkey or azurestorageaccountkey field in secrets(%v)", emptyAzureAccountKeyMap),
+			expectedError:       fmt.Errorf("could not find accountkey or azurestorageaccountkey field in secrets"),
 		},
 		{
 			options:             emptyAzureAccountNameMap,
 			expectedAccountName: "",
 			expectedAccountKey:  "testkey",
-			expectedError:       fmt.Errorf("could not find accountname or azurestorageaccountname field secrets(%v)", emptyAzureAccountNameMap),
+			expectedError:       fmt.Errorf("could not find accountname or azurestorageaccountname field in secrets"),
 		},
 		{
 			options:             nil,
@@ -844,9 +909,7 @@ func TestGetContainerReference(t *testing.T) {
 			secrets: map[string]string{
 				"accountKey": fakeAccountKey,
 			},
-			expectedError: fmt.Errorf("could not find %s or %s field secrets(%v)", accountNameField, defaultSecretAccountName, map[string]string{
-				"accountKey": fakeAccountKey,
-			}),
+			expectedError: fmt.Errorf("could not find %s or %s field in secrets", accountNameField, defaultSecretAccountName),
 		},
 		{
 			name:          "failed to retrieve accountKey",
@@ -854,9 +917,7 @@ func TestGetContainerReference(t *testing.T) {
 			secrets: map[string]string{
 				"accountName": fakeAccountName,
 			},
-			expectedError: fmt.Errorf("could not find %s or %s field in secrets(%v)", accountKeyField, defaultSecretAccountKey, map[string]string{
-				"accountName": fakeAccountName,
-			}),
+			expectedError: fmt.Errorf("could not find %s or %s field in secrets", accountKeyField, defaultSecretAccountKey),
 		},
 		{
 			name:          "failed to obtain client",

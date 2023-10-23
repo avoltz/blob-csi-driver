@@ -26,6 +26,8 @@ HOST_CMD="nsenter --mount=/proc/1/ns/mnt"
 
 DISTRIBUTION=$($HOST_CMD cat /etc/os-release | grep ^ID= | cut -d'=' -f2 | tr -d '"')
 echo "Linux distribution: $DISTRIBUTION"
+ARCH=$($HOST_CMD uname -m)
+echo "Linux Arch is $(uname -m)"
 
 if [ "${DISTRIBUTION}" = "ubuntu" ] && { [ "${INSTALL_BLOBFUSE}" = "true" ] || [ "${INSTALL_BLOBFUSE2}" = "true" ]; }
 then

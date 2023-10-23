@@ -17,7 +17,7 @@ GIT_COMMIT ?= $(shell git rev-parse HEAD)
 REGISTRY ?= andyzhangx
 REGISTRY_NAME ?= $(shell echo $(REGISTRY) | sed "s/.azurecr.io//g")
 IMAGE_NAME ?= blob-csi
-IMAGE_VERSION ?= v1.23.0
+IMAGE_VERSION ?= v1.24.0
 CLOUD ?= AzurePublicCloud
 # Use a custom version for E2E tests if we are in Prow
 ifdef CI
@@ -29,9 +29,10 @@ CSI_IMAGE_TAG ?= $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_VERSION)
 CSI_IMAGE_TAG_LATEST = $(REGISTRY)/$(IMAGE_NAME):latest
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS ?= "-X ${PKG}/pkg/blob.driverVersion=${IMAGE_VERSION} -X ${PKG}/pkg/blob.gitCommit=${GIT_COMMIT} -X ${PKG}/pkg/blob.buildDate=${BUILD_DATE} -s -w -extldflags '-static'"
-E2E_HELM_OPTIONS ?= --set image.blob.pullPolicy=Always --set image.blob.repository=$(REGISTRY)/$(IMAGE_NAME) --set image.blob.tag=$(IMAGE_VERSION) --set driver.userAgentSuffix="e2e-test"
 ifdef ENABLE_BLOBFUSE_PROXY
-override E2E_HELM_OPTIONS := $(E2E_HELM_OPTIONS) --set controller.logLevel=6 --set node.logLevel=6 --set node.enableBlobfuseProxy=true
+E2E_HELM_OPTIONS ?= --set image.blob.pullPolicy=Always --set image.blob.repository=$(REGISTRY)/$(IMAGE_NAME) --set image.blob.tag=$(IMAGE_VERSION) --set driver.userAgentSuffix="e2e-test" --set controller.logLevel=6 --set node.logLevel=6 --set node.enableBlobfuseProxy=true
+else
+E2E_HELM_OPTIONS ?= --set image.blob.pullPolicy=Always --set image.blob.repository=$(REGISTRY)/$(IMAGE_NAME) --set image.blob.tag=$(IMAGE_VERSION) --set driver.userAgentSuffix="e2e-test"
 endif
 E2E_HELM_OPTIONS += ${EXTRA_HELM_OPTIONS}
 GO111MODULE = on
@@ -111,13 +112,13 @@ blob: blobfuse-proxy
 blob-windows:
 	CGO_ENABLED=0 GOOS=windows go build -a -ldflags ${LDFLAGS} -mod vendor -o _output/blobplugin.exe ./pkg/blobplugin
 
-.PHONT: blob-darwin
+.PHONY: blob-darwin
 blob-darwin:
 	CGO_ENABLED=0 GOOS=darwin go build -a -ldflags ${LDFLAGS} -mod vendor -o _output/blobplugin ./pkg/blobplugin
 
 .PHONY: container
 container: blob
-	docker build -t $(CSI_IMAGE_TAG) --output=type=docker -f ./pkg/blobplugin/Dockerfile .
+	docker build -t $(CSI_IMAGE_TAG) --build-arg ARCH=$(ARCH) --output=type=docker -f ./pkg/blobplugin/Dockerfile .
 
 .PHONY: container-linux
 container-linux:
@@ -182,4 +183,4 @@ delete-metrics-svc:
 
 .PHONY: blobfuse-proxy
 blobfuse-proxy:
-	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags="-s -w" -o _output/${ARCH}/blobfuse-proxy ./pkg/blobfuse-proxy
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -mod vendor -ldflags="-s -w" -o _output/${ARCH}/blobfuse-proxy ./pkg/blobfuse-proxy

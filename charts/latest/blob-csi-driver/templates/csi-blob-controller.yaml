@@ -70,10 +70,11 @@ spec:
             - "--csi-address=$(ADDRESS)"
             - "--leader-election"
             - "--leader-election-namespace={{ .Release.Namespace }}"
-            - "--timeout=120s"
+            - "--timeout=1200s"
             - "--extra-create-metadata=true"
             - "--kube-api-qps=50"
             - "--kube-api-burst=100"
+            - "--feature-gates=HonorPVReclaimPolicy=true"
           env:
             - name: ADDRESS
               value: /csi/csi.sock

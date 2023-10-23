@@ -31,10 +31,6 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func init() {
-	_ = flag.Set("logtostderr", "true")
-}
-
 var (
 	endpoint                               = flag.String("endpoint", "unix://tmp/csi.sock", "CSI endpoint")
 	blobfuseProxyEndpoint                  = flag.String("blobfuse-proxy-endpoint", "unix://tmp/blobfuse-proxy.sock", "blobfuse-proxy endpoint")
@@ -61,10 +57,14 @@ var (
 	kubeAPIQPS                             = flag.Float64("kube-api-qps", 25.0, "QPS to use while communicating with the kubernetes apiserver.")
 	kubeAPIBurst                           = flag.Int("kube-api-burst", 50, "Burst to use while communicating with the kubernetes apiserver.")
 	appendMountErrorHelpLink               = flag.Bool("append-mount-error-help-link", true, "Whether to include a link for help with mount errors when a mount error occurs.")
+	enableAznfsMount                       = flag.Bool("enable-aznfs-mount", false, "replace nfs mount with aznfs mount")
+	volStatsCacheExpireInMinutes           = flag.Int("vol-stats-cache-expire-in-minutes", 10, "The cache expire time in minutes for volume stats cache")
+	sasTokenExpirationMinutes              = flag.Int("sas-token-expiration-minutes", 1440, "sas token expiration minutes during volume cloning")
 )
 
 func main() {
 	klog.InitFlags(nil)
+	_ = flag.Set("logtostderr", "true")
 	flag.Parse()
 	if *version {
 		info, err := blob.GetVersionYAML(*driverName)
@@ -104,6 +104,9 @@ func handle() {
 		AppendMountErrorHelpLink:               *appendMountErrorHelpLink,
 		KubeAPIQPS:                             *kubeAPIQPS,
 		KubeAPIBurst:                           *kubeAPIBurst,
+		EnableAznfsMount:                       *enableAznfsMount,
+		VolStatsCacheExpireInMinutes:           *volStatsCacheExpireInMinutes,
+		SasTokenExpirationMinutes:              *sasTokenExpirationMinutes,
 	}
 	driver := blob.NewDriver(&driverOptions)
 	if driver == nil {

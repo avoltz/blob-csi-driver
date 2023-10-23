@@ -15,12 +15,12 @@ Disclaimer: Deploying this driver manually is not an officially supported Micros
 ### Project status: GA
 
 ### Container Images & Kubernetes Compatibility:
-|driver version  |Image                                                 | supported k8s version | built-in blobfuse v1 version | built-in blobfuse v2 version|
-|----------------|------------------------------------------------------|-----------------------|------------------------------| ----------------------------|
-|master branch   |mcr.microsoft.com/k8s/csi/blob-csi:latest             | 1.21+                 | 1.4.5                        | 2.0.3           |
-|v1.22.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.22.0 | 1.21+                 | 1.4.5                        | 2.0.3           |
-|v1.21.3         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.21.3 | 1.21+                 | 1.4.5                        | 2.0.3           |
-|v1.20.2         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.20.2 | 1.21+                 | 1.4.5                        | 2.0.3           |
+|driver version  |Image                                                 | supported k8s version |
+|----------------|------------------------------------------------------|-----------------------|
+|master branch   |mcr.microsoft.com/k8s/csi/blob-csi:latest             | 1.21+                 |
+|v1.23.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.23.0 | 1.21+                 |
+|v1.22.2         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.22.2 | 1.21+                 |
+|v1.21.4         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.21.4 | 1.21+                 |
 
 ### Driver parameters
 Please refer to `blob.csi.azure.com` [driver parameters](./docs/driver-parameters.md)
@@ -47,7 +47,7 @@ This option does not depend on cloud provider config file, supports cross subscr
 >
 > To install specific blobfuse v2 version, run following command directly after driver is running on the agent node:
 > ```console
-> kubectl patch daemonset csi-blob-node -n kube-system -p '{"spec":{"template":{"spec":{"initContainers":[{"env":[{"name":"INSTALL_BLOBFUSE2","value":"true"},{"name":"BLOBFUSE2_VERSION","value":"2.0.3"}],"name":"install-blobfuse-proxy"}]}}}}'
+> kubectl patch daemonset csi-blob-node -n kube-system -p '{"spec":{"template":{"spec":{"initContainers":[{"env":[{"name":"INSTALL_BLOBFUSE2","value":"true"},{"name":"BLOBFUSE2_VERSION","value":"2.1.0"}],"name":"install-blobfuse-proxy"}]}}}}'
 > ```
 >
  - install by [helm charts](./charts)
@@ -57,7 +57,6 @@ This option does not depend on cloud provider config file, supports cross subscr
    - [Azure RedHat OpenShift](https://github.com/ezYakaEagle442/aro-pub-storage/blob/master/setup-store-CSI-driver-azure-blob.md)
  - install managed CSI driver on following platforms:
    - [AKS](https://learn.microsoft.com/en-us/azure/aks/azure-blob-csi)
-   - [Azure RedHat OpenShift](https://github.com/ezYakaEagle442/aro-pub-storage/blob/master/setup-store-CSI-driver-azure-blob.md)
 
 ### Usage
  - [Basic usage](./deploy/example/e2e_usage.md)

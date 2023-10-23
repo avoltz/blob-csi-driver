@@ -41,8 +41,30 @@ func (az *Cloud) reconcilePrivateLinkService(
 	fipConfig *network.FrontendIPConfiguration,
 	wantPLS bool,
 ) error {
-	createPLS := wantPLS && serviceRequiresPLS(service)
+	isinternal := requiresInternalLoadBalancer(service)
+	pipRG := az.getPublicIPAddressResourceGroup(service)
+	_, _, fipIPVersion := az.serviceOwnsFrontendIP(*fipConfig, service)
 	serviceName := getServiceName(service)
+	var isIPv6 bool
+	var err error
+	if fipIPVersion != "" {
+		isIPv6 = fipIPVersion == network.IPv6
+	} else {
+		if isIPv6, err = az.isFIPIPv6(service, pipRG, fipConfig); err != nil {
+			klog.Errorf("reconcilePrivateLinkService for service(%s): failed to get FIP IP family: %v", serviceName, err)
+			return err
+		}
+	}
+	createPLS := wantPLS && serviceRequiresPLS(service)
+	isDualStack := isServiceDualStack(service)
+	if isIPv6 {
+		if isDualStack || !createPLS {
+			klog.V(2).Infof("IPv6 is not supported for private link service, skip reconcilePrivateLinkService for service(%s)", serviceName)
+			return nil
+		}
+		return fmt.Errorf("IPv6 is not supported for private link service")
+	}
+
 	fipConfigID := fipConfig.ID
 	klog.V(2).Infof("reconcilePrivateLinkService for service(%s) - LB fipConfigID(%s) - wantPLS(%t) - createPLS(%t)", serviceName, pointer.StringDeref(fipConfig.Name, ""), wantPLS, createPLS)
 
@@ -59,7 +81,7 @@ func (az *Cloud) reconcilePrivateLinkService(
 
 	if createPLS {
 		// Firstly, make sure it's internal service
-		if !requiresInternalLoadBalancer(service) && !consts.IsK8sServiceDisableLoadBalancerFloatingIP(service) {
+		if !isinternal && !consts.IsK8sServiceDisableLoadBalancerFloatingIP(service) {
 			return fmt.Errorf("reconcilePrivateLinkService for service(%s): service requiring private link service must be internal or disable floating ip", serviceName)
 		}
 
@@ -380,11 +402,28 @@ func (az *Cloud) reconcilePLSIpConfigs(
 	}
 
 	if changed {
+		getFrontendIPConfigName := func(suffix string) (string, error) {
+			// frontend ipConfig name length cannot exceed 80
+			maxPrefixLen := consts.FrontendIPConfigNameMaxLength - len(suffix)
+			if maxPrefixLen <= 0 {
+				return "", fmt.Errorf("reconcilePLSIpConfigs: frontend ipConfig suffix %s is too long (not likely to happen)", suffix)
+			}
+			prefix := fmt.Sprintf("%s-%s", pointer.StringDeref(subnet.Name, ""), pointer.StringDeref(existingPLS.Name, ""))
+			if len(prefix) > maxPrefixLen {
+				prefix = prefix[:maxPrefixLen]
+			}
+			return prefix + suffix, nil
+		}
+
 		ipConfigs := []network.PrivateLinkServiceIPConfiguration{}
 		for k := range staticIps {
 			ip := k
 			isPrimary := strings.EqualFold(ip, primaryIP)
-			configName := fmt.Sprintf("%s-%s-static-%s", pointer.StringDeref(subnet.Name, ""), pointer.StringDeref(existingPLS.Name, ""), ip)
+			suffix := fmt.Sprintf("-static-%s", ip)
+			configName, err := getFrontendIPConfigName(suffix)
+			if err != nil {
+				return false, err
+			}
 			ipConfigs = append(ipConfigs, network.PrivateLinkServiceIPConfiguration{
 				Name: &configName,
 				PrivateLinkServiceIPConfigurationProperties: &network.PrivateLinkServiceIPConfigurationProperties{
@@ -400,7 +439,11 @@ func (az *Cloud) reconcilePLSIpConfigs(
 		}
 		for i := 0; i < int(ipConfigCount)-len(staticIps); i++ {
 			isPrimary := primaryIP == "" && i == 0
-			configName := fmt.Sprintf("%s-%s-dynamic-%d", pointer.StringDeref(subnet.Name, ""), pointer.StringDeref(existingPLS.Name, ""), i)
+			suffix := fmt.Sprintf("-dynamic-%d", i)
+			configName, err := getFrontendIPConfigName(suffix)
+			if err != nil {
+				return false, err
+			}
 			ipConfigs = append(ipConfigs, network.PrivateLinkServiceIPConfiguration{
 				Name: &configName,
 				PrivateLinkServiceIPConfigurationProperties: &network.PrivateLinkServiceIPConfigurationProperties{
