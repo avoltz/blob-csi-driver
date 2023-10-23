@@ -579,7 +579,7 @@ func TestGetAuthEnv(t *testing.T) {
 					Keys: &accountkeylist,
 				}
 				mockStorageAccountsClient.EXPECT().ListKeys(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(list, nil).AnyTimes()
-				_, _, _, _, _, err := d.GetAuthEnv(context.TODO(), volumeID, "", attrib, secret)
+				_, _, _, _, _, _, _, err := d.GetAuthEnv(context.TODO(), volumeID, "", attrib, secret)
 				expectedErr := fmt.Errorf("invalid getlatestaccountkey: %s in volume context", "invalid")
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("actualErr: (%v), expectedErr: (%v)", err, expectedErr)
