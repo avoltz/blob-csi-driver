@@ -29,6 +29,8 @@ import (
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
 	cv "sigs.k8s.io/blob-csi-driver/pkg/edgecache/cachevolume"
 	blobcsiutil "sigs.k8s.io/blob-csi-driver/pkg/util"
+	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
+	"sigs.k8s.io/cloud-provider-azure/pkg/metrics"
 
 	"github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -257,6 +259,12 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	attrib := req.GetVolumeContext()
 	secrets := req.GetSecrets()
 
+	mc := metrics.NewMetricContext(blobCSIDriverName, "node_stage_volume", d.cloud.ResourceGroup, "", d.Name)
+	isOperationSucceeded := false
+	defer func() {
+		mc.ObserveOperationWithResult(isOperationSucceeded, VolumeID, volumeID)
+	}()
+
 	var serverAddress, storageEndpointSuffix, protocol, ephemeralVolMountOptions string
 	var ephemeralVol, isHnsEnabled bool
 
@@ -378,10 +386,15 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		klog.V(2).Infof("target %v\nprotocol %v\n\nvolumeId %v\ncontext %v\nmountflags %v\nserverAddress %v",
 			targetPath, protocol, volumeID, attrib, mountFlags, serverAddress)
 
+		mountType := AZNFS
+		if !d.enableAznfsMount {
+			mountType = NFS
+		}
+
 		source := fmt.Sprintf("%s:/%s/%s", serverAddress, accountName, containerName)
 		mountOptions := util.JoinMountOptions(mountFlags, []string{"sec=sys,vers=3,nolock"})
 		if err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
-			return true, d.mounter.MountSensitive(source, targetPath, NFS, mountOptions, []string{})
+			return true, d.mounter.MountSensitive(source, targetPath, mountType, mountOptions, []string{})
 		}); err != nil {
 			var helpLinkMsg string
 			if d.appendMountErrorHelpLink {
@@ -398,6 +411,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			klog.V(2).Infof("skip chmod on targetPath(%s) since mountPermissions is set as 0", targetPath)
 		}
 
+		isOperationSucceeded = true
 		klog.V(2).Infof("volume(%s) mount %s on %s succeeded", volumeID, source, targetPath)
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
@@ -500,6 +514,12 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolu
 	}
 	defer d.volumeLocks.Release(volumeID)
 
+	mc := metrics.NewMetricContext(blobCSIDriverName, "node_unstage_volume", d.cloud.ResourceGroup, "", d.Name)
+	isOperationSucceeded := false
+	defer func() {
+		mc.ObserveOperationWithResult(isOperationSucceeded, VolumeID, volumeID)
+	}()
+
 	klog.V(2).Infof("NodeUnstageVolume: volume %s unmounting on %s", volumeID, stagingTargetPath)
 
 	// Check if there is a mount at the edgecache suffix
@@ -526,6 +546,7 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolu
 	}
 	klog.V(2).Infof("NodeUnstageVolume: volume %s unmount on %s successfully", volumeID, stagingTargetPath)
 
+	isOperationSucceeded = true
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
@@ -557,12 +578,31 @@ func (d *Driver) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeS
 		return nil, status.Error(codes.InvalidArgument, "NodeGetVolumeStats volume path was empty")
 	}
 
+	// check if the volume stats is cached
+	cache, err := d.volStatsCache.Get(req.VolumeId, azcache.CacheReadTypeDefault)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, err.Error())
+	}
+	if cache != nil {
+		resp := cache.(csi.NodeGetVolumeStatsResponse)
+		klog.V(6).Infof("NodeGetVolumeStats: volume stats for volume %s path %s is cached", req.VolumeId, req.VolumePath)
+		return &resp, nil
+	}
+
+	mc := metrics.NewMetricContext(blobCSIDriverName, "node_get_volume_stats", d.cloud.ResourceGroup, "", d.Name)
+	isOperationSucceeded := false
+	defer func() {
+		mc.ObserveOperationWithResult(isOperationSucceeded, VolumeID, req.VolumeId)
+	}()
+
 	if _, err := os.Lstat(req.VolumePath); err != nil {
 		if os.IsNotExist(err) {
 			return nil, status.Errorf(codes.NotFound, "path %s does not exist", req.VolumePath)
 		}
 		return nil, status.Errorf(codes.Internal, "failed to stat file %s: %v", req.VolumePath, err)
 	}
+
+	klog.V(6).Infof("NodeGetVolumeStats: begin to get VolumeStats on volume %s path %s", req.VolumeId, req.VolumePath)
 
 	volumeMetrics, err := volume.NewMetricsStatFS(req.VolumePath).GetMetrics()
 	if err != nil {
@@ -595,7 +635,7 @@ func (d *Driver) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeS
 		return nil, status.Errorf(codes.Internal, "failed to transform disk inodes used(%v)", volumeMetrics.InodesUsed)
 	}
 
-	return &csi.NodeGetVolumeStatsResponse{
+	resp := &csi.NodeGetVolumeStatsResponse{
 		Usage: []*csi.VolumeUsage{
 			{
 				Unit:      csi.VolumeUsage_BYTES,
@@ -610,7 +650,13 @@ func (d *Driver) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeS
 				Used:      inodesUsed,
 			},
 		},
-	}, nil
+	}
+
+	isOperationSucceeded = true
+	klog.V(6).Infof("NodeGetVolumeStats: volume stats for volume %s path %s is %v", req.VolumeId, req.VolumePath, resp)
+	// cache the volume stats per volume
+	d.volStatsCache.Set(req.VolumeId, *resp)
+	return resp, nil
 }
 
 // ensureMountPoint: create mount point if not exists

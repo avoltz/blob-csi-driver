@@ -1,6 +1,17 @@
 ## Driver Parameters
  > parameter names are case-insensitive
 
+<details><summary>required permissions for CSI driver</summary>
+<pre>
+    - Microsoft.Storage/storageAccounts/blobServices/read
+    - Microsoft.Storage/storageAccounts/blobServices/containers/write
+    - Microsoft.Storage/storageAccounts/listKeys/action
+    - Microsoft.Storage/storageAccounts/read
+    - Microsoft.Storage/storageAccounts/write
+    - Microsoft.Storage/storageAccounts/delete
+</pre>
+</details>
+
 ### Dynamic Provisioning
   > [blobfuse example](../deploy/example/storageclass-blobfuse.yaml)
 
@@ -12,7 +23,7 @@ skuName | Azure storage account type (alias: `storageAccountType`) | `Standard_L
 location | Azure location | `eastus`, `westus`, etc. | No | if empty, driver will use the same location name as current k8s cluster
 resourceGroup | Azure resource group name | existing resource group name | No | if empty, driver will use the same resource group name as current k8s cluster
 storageAccount | specify Azure storage account name| STORAGE_ACCOUNT_NAME | No | If the driver is not provided with a specific storage account name, it will search for a suitable storage account that matches the account settings within the same resource group. If it cannot find a matching storage account, it will create a new one. However, if a storage account name is specified, the storage account must already exist.
-protocol | specify blobfuse, blobfuse2 or NFSv3 mount (blobfuse2 is still in Preview) | `fuse`, `fuse2`, `nfs` | No | `fuse`
+protocol | specify blobfuse, blobfuse2 or NFSv3 mount | `fuse`, `fuse2`, `nfs` | No | `fuse`
 networkEndpointType | specify network endpoint type for the storage account created by driver. If `privateEndpoint` is specified, a private endpoint will be created for the storage account. For other cases, a service endpoint will be created for NFS protocol. | "",`privateEndpoint` | No | ``<br>for AKS cluster, make sure cluster Control plane identity (that is, your AKS cluster name) is added to the Contributor role in the resource group hosting the VNet
 storageEndpointSuffix | specify Azure storage endpoint suffix | `core.windows.net`, `core.chinacloudapi.cn`, etc | No | if empty, driver will use default storage endpoint suffix according to cloud environment, e.g. `core.windows.net`
 containerName | specify the existing container(directory) name | existing container name | No | if empty, driver will create a new container name, starting with `pvc-fuse` for blobfuse or `pvc-nfs` for NFSv3
@@ -28,6 +39,7 @@ useDataPlaneAPI | specify whether use data plane API for blob container create/d
 --- | **Following parameters are only for blobfuse** | --- | --- |
 subscriptionID | specify Azure subscription ID in which blob storage directory will be created | Azure subscription ID | No | if not empty, `resourceGroup` must be provided
 storeAccountKey | whether store account key to k8s secret <br><br> Note:  <br> `false` means driver would leverage kubelet identity to get account key | `true`,`false` | No | `true`
+getLatestAccountKey | whether getting the latest account key based on the creation time, this driver would get the first key by default | `true`,`false` | No | `false`
 secretName | specify secret name to store account key | | No |
 secretNamespace | specify the namespace of secret to store account key | `default`,`kube-system`, etc | No | pvc namespace
 isHnsEnabled | enable `Hierarchical namespace` for Azure DataLake storage account | `true`,`false` | No | `false`
@@ -44,9 +56,9 @@ enableBlobVersioning | Enable [blob versioning](https://learn.microsoft.com/en-u
 
 Blobfuse driver does not honor `fsGroup` securityContext setting, instead user could use `-o gid=1000` in `mountOptions` to set ownership, check [here](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#mount-options) for more mountoptions.
 
- - Regarding the support for [Azure DataLake storage account](https://docs.microsoft.com/en-us/azure/storage/blobs/upgrade-to-data-lake-storage-gen2-how-to) when using blobfuse mount
-   - To create an ADLS account using the driver in dynamic provisioning, you need to specify `isHnsEnabled: "true"` in the storage class parameters.
-   - To enable blobfuse access to an ADLS account in static provisioning, you need to specify the mount option `--use-adls=true` in the persistent volume.
+ - To support an [Azure DataLake storage account](https://docs.microsoft.com/en-us/azure/storage/blobs/upgrade-to-data-lake-storage-gen2-how-to) when using blobfuse mount, you'll need to do the following:
+   - To create an ADLS account using the driver in dynamic provisioning, specify `isHnsEnabled: "true"` in the storage class parameters.
+   - To enable blobfuse access to an ADLS account in static provisioning, specify the mount option `--use-adls=true` in the persistent volume.
 
  - account tags format created by dynamic provisioning
 ```
@@ -72,7 +84,7 @@ pvc-92a4d7f2-f23b-4904-bad4-2cbfcff6e388
 
 Name | Meaning | Available Value | Mandatory | Default value
 --- | --- | --- | --- | ---
-volumeHandle | Specify a value the driver can use to uniquely identify the storage blob container in the cluster. | A recommended way to produce a unique value is to combine the globally unique storage account name and container name: {account-name}_{container-name}. Note: the # character is reserved for internal use. | Yes |
+volumeHandle | Specify a value the driver can use to uniquely identify the storage blob container in the cluster. | A recommended way to produce a unique value is to combine the globally unique storage account name and container name: {account-name}_{container-name}. Note: the # character is reserved for internal use, the / character is not allowed. | Yes |
 volumeAttributes.resourceGroup | Azure resource group name | existing resource group name | No | if empty, driver will use the same resource group name as current k8s cluster
 volumeAttributes.storageAccount | existing storage account name | existing storage account name | Yes |
 volumeAttributes.containerName | existing container name | existing container name | Yes |
@@ -80,6 +92,7 @@ volumeAttributes.protocol | specify blobfuse, blobfuse2 or NFSv3 mount (blobfuse
 --- | **Following parameters are only for blobfuse** | --- | --- |
 volumeAttributes.secretName | secret name that stores storage account name and key(only applies for SMB) | | No |
 volumeAttributes.secretNamespace | secret namespace | `default`,`kube-system`, etc | No | pvc namespace
+volumeAttributes.getLatestAccountKey | whether getting the latest account key based on the creation time, this driver would get the first key by default | `true`,`false` | No | `false`
 nodeStageSecretRef.name | secret name that stores(check below examples):<br>`azurestorageaccountkey`<br>`azurestorageaccountsastoken`<br>`msisecret`<br>`azurestoragespnclientsecret` | existing Kubernetes secret name |  No  |
 nodeStageSecretRef.namespace | secret namespace | k8s namespace  |  Yes  |
 --- | **Following parameters are only for NFS protocol** | --- | --- |
