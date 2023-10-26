@@ -48,6 +48,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	mount_azure_blob "sigs.k8s.io/blob-csi-driver/pkg/blobfuse-proxy/pb"
+	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
 )
 
 const (
@@ -146,6 +147,8 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	}
 
 	klog.V(2).Infof("NodePublishVolume: volume %s mounting %s at %s with mountOptions: %v", volumeID, source, target, mountOptions)
+	csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.NodePublishingVolume, csicommon.CSIEventSourceStr,
+		fmt.Sprintf("NodePublishVolume: Mounting volume %s", volumeID))
 	if d.enableBlobMockMount {
 		klog.Warningf("NodePublishVolume: mock mount on volumeID(%s), this is only for TESTING!!!", volumeID)
 		if err := blobcsiutil.MakeDir(target, os.FileMode(mountPermissions)); err != nil {
@@ -162,7 +165,8 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		return nil, status.Errorf(codes.Internal, "Could not mount %q at %q: %v", source, target, err)
 	}
 	klog.V(2).Infof("NodePublishVolume: volume %s mount %s at %s successfully", volumeID, source, target)
-
+	csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.NodePublishedVolume, csicommon.CSIEventSourceStr,
+		fmt.Sprintf("NodePublishVolume: Mounted volume %s", volumeID))
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
@@ -226,11 +230,15 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublish
 	}
 
 	klog.V(2).Infof("NodeUnpublishVolume: unmounting volume %s on %s", volumeID, targetPath)
+	csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.NodeUnPublishingVolume, csicommon.CSIEventSourceStr,
+		fmt.Sprintf("NodeUnpublishVolume: Unmounting volume %s", volumeID))
 	err := mount.CleanupMountPoint(targetPath, d.mounter, true /*extensiveMountPointCheck*/)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to unmount target %q: %v", targetPath, err)
 	}
 	klog.V(2).Infof("NodeUnpublishVolume: unmount volume %s on %s successfully", volumeID, targetPath)
+	csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.NodeUnPublishedVolume, csicommon.CSIEventSourceStr,
+		fmt.Sprintf("NodeUnpublishVolume: Unmounted volume %s", volumeID))
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
@@ -352,8 +360,8 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			return nil, err
 		}
 
-		klog.V(2).Infof("edgecache will be used for volume %s", volumeID)
-		klog.V(3).Infof("edgecache attrib %v", attrib)
+		klog.V(2).Infof("NodeStageVolume: edgecache will be used for volume %s", volumeID)
+		klog.V(3).Infof("NodeStageVolume: edgecache attrib %v", attrib)
 		pvName, exists := attrib[pvNameKey]
 		var pv *v1.PersistentVolume
 		var err error
@@ -373,12 +381,19 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		if err == cv.ErrVolumeAlreadyBeingProvisioned {
 			klog.V(2).Infof("NodeStageVolume: volume has already been provisioned")
 		} else if err != nil {
+			csicommon.SendKubeEvent(v1.EventTypeWarning, csicommon.FailedToProvisionVolume, csicommon.CSIEventSourceStr,
+				fmt.Sprintf("NodeStageVolume: failed to provision volume. error: %v", err))
 			return nil, err
 		}
-
+		csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.NodeStagingVolume, csicommon.CSIEventSourceStr,
+			fmt.Sprintf("NodeStageVolume: Mounting volume %s", volumeID))
+		klog.V(2).Infof("NodeStageVolume: Mounting volume(%s) on %s", volumeID, targetPath)
 		if err = d.edgeCacheManager.MountVolume(accountName, containerName, storageEndpointSuffix, targetPath); err != nil {
 			return nil, err
 		}
+		csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.NodeStagedVolume, csicommon.CSIEventSourceStr,
+			fmt.Sprintf("NodeStageVolume: Mounted volume %s", volumeID))
+		klog.V(2).Infof("NodeStageVolume: Mounted volume(%s) on %s", volumeID, targetPath)
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
@@ -531,6 +546,8 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolu
 	}
 	if !isNotEdgeCacheVolume {
 		// This is an edgecache mount path so unmount it and clean it up
+		csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.NodeUnStagingVolume, csicommon.CSIEventSourceStr,
+			fmt.Sprintf("NodeUnstageVolume: Unmounting volume %s", volumeID))
 		if err := d.edgeCacheManager.UnmountVolume(volumeID, edgeCacheTargetPath); err != nil {
 			return nil, err
 		}
@@ -544,8 +561,9 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolu
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to unmount staging target %q: %v", stagingTargetPath, err)
 	}
-	klog.V(2).Infof("NodeUnstageVolume: volume %s unmount on %s successfully", volumeID, stagingTargetPath)
-
+	csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.NodeUnStagedVolume, csicommon.CSIEventSourceStr,
+		fmt.Sprintf("NodeUnstageVolume: Unmounted volume %s", volumeID))
+	klog.V(2).Infof("NodeUnstageVolume: Unmounted volume(%s) TargetPath(%s)", volumeID, stagingTargetPath)
 	isOperationSucceeded = true
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }

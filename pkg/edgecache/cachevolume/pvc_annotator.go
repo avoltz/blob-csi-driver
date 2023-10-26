@@ -24,6 +24,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/strings/slices"
+	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
 	blobcsiutil "sigs.k8s.io/blob-csi-driver/pkg/util"
 	"sigs.k8s.io/cloud-provider-azure/pkg/provider/config"
 
@@ -98,6 +99,7 @@ func (c *PVCAnnotator) buildAnnotations(pv *v1.PersistentVolume, cfg config.Azur
 	if providedAuth.authType == "WorkloadIdentity" && !cfg.UseFederatedWorkloadIdentityExtension {
 		err := fmt.Errorf("workload identity was requested by the csi driver didn't initialize with the workload identity env vars")
 		klog.Error(err)
+		csicommon.SendKubeEvent(v1.EventTypeWarning, csicommon.FailedAuthentication, csicommon.CSIEventSourceStr, err.Error())
 		return nil, err
 
 	} else if providedAuth.authType == "AccountKey" {
@@ -113,6 +115,7 @@ func (c *PVCAnnotator) buildAnnotations(pv *v1.PersistentVolume, cfg config.Azur
 			if !secretNameOk || !secretNamespaceOk { // if keyName doesn't exist in the PV annotations
 				err := fmt.Errorf("failed to discover storage account key secret; name: '%s' ns: '%s'", secretName, secretNamespace)
 				klog.Error(err)
+				csicommon.SendKubeEvent(v1.EventTypeWarning, csicommon.FailedAuthentication, csicommon.CSIEventSourceStr, err.Error())
 				return nil, err
 			}
 		}
@@ -152,6 +155,7 @@ func (c *PVCAnnotator) SendProvisionVolume(pv *v1.PersistentVolume, cloudConfig 
 	if valid := c.requestAuthIsValid(providedAuth.authType); !valid {
 		err := fmt.Errorf("requested storage auth %s is not a member of valid auths %+v", providedAuth.authType, validStorageAuthentications)
 		klog.Error(err)
+		csicommon.SendKubeEvent(v1.EventTypeWarning, csicommon.InvalidAuthentication, csicommon.CSIEventSourceStr, err.Error())
 		return err
 	}
 
@@ -170,6 +174,6 @@ func (c *PVCAnnotator) SendProvisionVolume(pv *v1.PersistentVolume, cloudConfig 
 	if err != nil {
 		return err
 	}
-
+	klog.V(2).Infof("Successfully verified authentication for PV '%s' and added annotations.", pv.Name)
 	return nil
 }

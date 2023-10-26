@@ -281,6 +281,15 @@ entries:
     - https://raw.githubusercontent.com/avoltz/blob-csi-driver/staging/charts/v4.3.0/blob-csi-driver-v4.3.0.tgz
     version: v4.3.0
   - apiVersion: v1
+    appVersion: v4.4.0
+    created: "2023-10-12T19:27:00.820283000Z"
+    description: Azure Blob Storage CSI driver
+    digest: 86a1f17a630f37d818c4cb1dd69e6c1711c64c411de6f808bb7a006a40097b71
+    name: blob-csi-driver
+    urls:
+    - https://raw.githubusercontent.com/avoltz/blob-csi-driver/staging/charts/v4.4.0/blob-csi-driver-v4.4.0.tgz
+    version: v4.4.0
+  - apiVersion: v1
     appVersion: latest
     created: "2023-09-14T07:10:07.884046607Z"
     description: Azure Blob Storage CSI driver
@@ -289,4 +298,4 @@ entries:
     urls:
     - https://raw.githubusercontent.com/avoltz/blob-csi-driver/staging/charts/latest/blob-csi-driver-v0.0.0.tgz
     version: v0.0.0
-generated: "2023-09-01T12:33:00.254303884Z"
+generated: "2023-10-12T19:27:00.820283000Z"
