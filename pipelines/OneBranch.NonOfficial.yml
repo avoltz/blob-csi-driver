@@ -71,6 +71,8 @@ extends:
         suppressionsFile: $(Build.SourcesDirectory)/.config/CredScanSuppressions.json
       policheck:
         break: true # always break the build on policheck issues. You can disable it by setting to 'false'
+      cg:
+        ignoreDirectories: Hydra
     stages:
       - template: OneBranch.body.yml@self
         parameters:
