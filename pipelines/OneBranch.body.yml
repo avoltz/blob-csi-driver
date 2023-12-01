@@ -184,3 +184,7 @@ stages:
               images:
                 - $(BlobImageRepo)
 
+          - task: ComponentGovernanceComponentDetection@0
+            inputs:
+              ignoreDirectories: s # Hydra is checked out to "s"
+
