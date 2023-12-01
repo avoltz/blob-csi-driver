@@ -18,9 +18,9 @@ Disclaimer: Deploying this driver manually is not an officially supported Micros
 |driver version  |Image                                                 | supported k8s version |
 |----------------|------------------------------------------------------|-----------------------|
 |master branch   |mcr.microsoft.com/k8s/csi/blob-csi:latest             | 1.21+                 |
-|v1.23.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.23.0 | 1.21+                 |
-|v1.22.2         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.22.2 | 1.21+                 |
-|v1.21.4         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.21.4 | 1.21+                 |
+|v1.23.2         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.23.2 | 1.21+                 |
+|v1.22.4         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.22.4 | 1.21+                 |
+|v1.21.6         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.21.6 | 1.21+                 |
 
 ### Driver parameters
 Please refer to `blob.csi.azure.com` [driver parameters](./docs/driver-parameters.md)
@@ -40,16 +40,16 @@ This option does not depend on cloud provider config file, supports cross subscr
 ### Install driver on a Kubernetes cluster
 > Note: this feature is only available in v1.19.5, v1.21.1 and later versions.
 >
-> To install specific blobfuse v1 version, run following command directly after driver is running on the agent node:
+> Execute following command to install a specific version of blobfuse v2 once driver is running on the agent node:
+> ```console
+> kubectl patch daemonset csi-blob-node -n kube-system -p '{"spec":{"template":{"spec":{"initContainers":[{"env":[{"name":"INSTALL_BLOBFUSE2","value":"true"},{"name":"BLOBFUSE2_VERSION","value":"2.1.2"}],"name":"install-blobfuse-proxy"}]}}}}'
+> ```
+>
+> Execute following command to install a specific version of blobfuse v1 once driver is running on the agent node:
 > ```console
 > kubectl patch daemonset csi-blob-node -n kube-system -p '{"spec":{"template":{"spec":{"initContainers":[{"env":[{"name":"INSTALL_BLOBFUSE","value":"true"},{"name":"BLOBFUSE_VERSION","value":"1.4.5"}],"name":"install-blobfuse-proxy"}]}}}}'
 > ```
->
-> To install specific blobfuse v2 version, run following command directly after driver is running on the agent node:
-> ```console
-> kubectl patch daemonset csi-blob-node -n kube-system -p '{"spec":{"template":{"spec":{"initContainers":[{"env":[{"name":"INSTALL_BLOBFUSE2","value":"true"},{"name":"BLOBFUSE2_VERSION","value":"2.1.0"}],"name":"install-blobfuse-proxy"}]}}}}'
-> ```
->
+
  - install by [helm charts](./charts)
  - install by [kubectl](./docs/install-blob-csi-driver.md)
  - install open source CSI driver on following platforms:
@@ -62,6 +62,7 @@ This option does not depend on cloud provider config file, supports cross subscr
  - [Basic usage](./deploy/example/e2e_usage.md)
  - [NFSv3](./deploy/example/nfs)
  - [fsGroupPolicy](./deploy/example/fsgroup)
+ - [Volume cloning](./deploy/example/cloning)
  - [Workload identity](./docs/workload-identity.md)
 
 ### Troubleshooting

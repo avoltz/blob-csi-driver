@@ -81,7 +81,7 @@ change below deployment config, e.g.
 blobfuse2 -v
 ```
 <pre>
-blobfuse2 version 2.1.0
+blobfuse2 version 2.1.2
 </pre>
 
 ### check blobfuse mount on the agent node
@@ -142,6 +142,40 @@ kubectl cp node-debugger-node-name-xxxx:/host/var/log/blobfuse2.log /tmp/blobfus
 kubectl delete po node-debugger-node-name-xxxx
 ```
  
+</details>
+
+### Troubleshooting aznfs mount
+> Supported from v1.22.2
+> About aznfs mount helper: https://github.com/Azure/AZNFS-mount/
+
+<details><summary>
+Check mount point information
+</summary>
+
+```console
+kubectl debug node/node-name --image=nginx
+findmnt -t nfs
+```
+
+The `SOURCE` of the mount point should have prefix with an ip address rather than domain name. e.g, **10.161.100.100**:/nfs02a796c105814dbebc4e/pvc-ca149059-6872-4d6f-a806-48402648110c.
+
+</details>
+
+
+<details><summary>
+Get client-side logs on Linux node 
+</summary>
+
+```console
+kubectl debug node/node-name --image=nginx
+
+cat /opt/microsoft/aznfs/data/aznfs.log
+```
+
+If ip was migrated successfully, you should find logs like: 
+1. `IP for nfsxxxxx.blob.core.windows.net changed [1.2.3.4 -> 5.6.7.8].`
+2. `Updating mountmap entry [nfsxxxxx.blob.core.windows.net 10.161.100.100 1.2.3.4  -> nfsxxxxx.blob.core.windows.net 10.161.100.100 5.6.7.8]`
+
 </details>
 
 ### Tips

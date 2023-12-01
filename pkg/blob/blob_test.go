@@ -57,11 +57,10 @@ func NewFakeDriver() *Driver {
 		BlobfuseProxyConnTimout:  5,
 		EnableBlobMockMount:      false,
 	}
-	driver := NewDriver(&driverOptions)
+	driver := NewDriver(&driverOptions, &azure.Cloud{})
 	driver.Name = fakeDriverName
 	driver.Version = vendorVersion
 	driver.subnetLockMap = util.NewLockMap()
-	driver.cloud = &azure.Cloud{}
 	return driver
 }
 
@@ -74,7 +73,7 @@ func TestNewFakeDriver(t *testing.T) {
 		BlobfuseProxyConnTimout: 5,
 		EnableBlobMockMount:     false,
 	}
-	d := NewDriver(&driverOptions)
+	d := NewDriver(&driverOptions, &azure.Cloud{})
 	assert.NotNil(t, d)
 }
 
@@ -87,7 +86,7 @@ func TestNewDriver(t *testing.T) {
 		BlobfuseProxyConnTimout: 5,
 		EnableBlobMockMount:     false,
 	}
-	driver := NewDriver(&driverOptions)
+	driver := NewDriver(&driverOptions, &azure.Cloud{})
 	fakedriver := NewFakeDriver()
 	fakedriver.Name = DefaultDriverName
 	fakedriver.Version = driverVersion
@@ -135,7 +134,7 @@ func TestRun(t *testing.T) {
 				os.Setenv(DefaultAzureCredentialFileEnv, fakeCredFile)
 
 				d := NewFakeDriver()
-				d.Run("tcp://127.0.0.1:0", "", true)
+				d.Run("tcp://127.0.0.1:0", true)
 			},
 		},
 		{
@@ -162,7 +161,7 @@ func TestRun(t *testing.T) {
 				d := NewFakeDriver()
 				d.cloud = &azure.Cloud{}
 				d.NodeID = ""
-				d.Run("tcp://127.0.0.1:0", "", true)
+				d.Run("tcp://127.0.0.1:0", true)
 			},
 		},
 	}
@@ -1659,6 +1658,49 @@ func TestIsSupportedAccessTier(t *testing.T) {
 		result := isSupportedAccessTier(test.accessTier)
 		if result != test.expectedResult {
 			t.Errorf("isSupportedTier(%s) returned with %v, not equal to %v", test.accessTier, result, test.expectedResult)
+		}
+	}
+}
+
+func TestIsNFSProtocol(t *testing.T) {
+	tests := []struct {
+		protocol       string
+		expectedResult bool
+	}{
+		{
+			protocol:       "",
+			expectedResult: false,
+		},
+		{
+			protocol:       "NFS",
+			expectedResult: true,
+		},
+		{
+			protocol:       "nfs",
+			expectedResult: true,
+		},
+		{
+			protocol:       "Nfs",
+			expectedResult: true,
+		},
+		{
+			protocol:       "NFSv3",
+			expectedResult: false,
+		},
+		{
+			protocol:       "aznfs",
+			expectedResult: true,
+		},
+		{
+			protocol:       "azNfs",
+			expectedResult: true,
+		},
+	}
+
+	for _, test := range tests {
+		result := isNFSProtocol(test.protocol)
+		if result != test.expectedResult {
+			t.Errorf("isNFSVolume(%s) returned with %v, not equal to %v", test.protocol, result, test.expectedResult)
 		}
 	}
 }

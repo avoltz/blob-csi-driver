@@ -77,7 +77,7 @@ func TestConcurrentLockEntry(t *testing.T) {
 	testLockMap.UnlockEntry("entry1")
 }
 
-func (lm *LockMap) lockAndCallback(t *testing.T, entry string, callbackChan chan<- interface{}) {
+func (lm *LockMap) lockAndCallback(_ *testing.T, entry string, callbackChan chan<- interface{}) {
 	lm.LockEntry(entry)
 	callbackChan <- true
 }
@@ -358,10 +358,10 @@ func TestGetOSInfo(t *testing.T) {
 		{
 			name: "parse os info correctly",
 			args: args{
-				f: []byte("DISTRIB_ID=Ubuntu\nDISTRIB_RELEASE=22.04"),
+				f: []byte("ID=ubuntu\nVERSION_ID=\"22.04\""),
 			},
 			want: &OsInfo{
-				Distro:  "Ubuntu",
+				Distro:  "ubuntu",
 				Version: "22.04",
 			},
 			wantErr: false,
@@ -572,8 +572,7 @@ func TestParseAzcopyJobList(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		dstBlobContainer := "dstBlobContainer"
-		jobid, jobState, err := parseAzcopyJobList(test.str, dstBlobContainer)
+		jobid, jobState, err := parseAzcopyJobList(test.str)
 		if jobid != test.expectedJobid || jobState != test.expectedJobState || !reflect.DeepEqual(err, test.expectedErr) {
 			t.Errorf("test[%s]: unexpected jobid: %v, jobState: %v, err: %v, expected jobid: %v, jobState: %v, err: %v", test.desc, jobid, jobState, err, test.expectedJobid, test.expectedJobState, test.expectedErr)
 		}
