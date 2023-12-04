@@ -71,10 +71,13 @@ func pv() *v1.PersistentVolume {
 	}
 }
 
+//revive:disable:unused-parameter
 func conflictError(action kubetesting.Action) (bool, runtime.Object, error) {
 	conflictError := kuberrors.NewApplyConflict([]metav1.StatusCause{}, "OperationNotPermitted")
 	return true, nil, conflictError
 }
+
+//revive:enable:unused-parameter
 
 func TestGetPVByVolumeID(t *testing.T) {
 	t.Run("ListFail", func(t *testing.T) {
