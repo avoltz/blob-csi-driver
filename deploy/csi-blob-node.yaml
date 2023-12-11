@@ -58,7 +58,7 @@ spec:
             - name: INSTALL_BLOBFUSE2
               value: "true"
             - name: BLOBFUSE2_VERSION
-              value: "2.1.0"
+              value: "2.1.2"
             - name: SET_MAX_OPEN_FILE_NUM
               value: "true"
             - name: MAX_FILE_NUM
@@ -68,6 +68,8 @@ spec:
           volumeMounts:
             - name: host-usr
               mountPath: /host/usr
+            - name: host-usr-local
+              mountPath: /host/usr/local
             - name: host-etc
               mountPath: /host/etc
       containers:
@@ -88,7 +90,7 @@ spec:
               cpu: 10m
               memory: 20Mi
         - name: node-driver-registrar
-          image: mcr.microsoft.com/oss/kubernetes-csi/csi-node-driver-registrar:v2.9.0
+          image: mcr.microsoft.com/oss/kubernetes-csi/csi-node-driver-registrar:v2.9.1
           args:
             - --csi-address=$(ADDRESS)
             - --kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)
@@ -181,6 +183,9 @@ spec:
         - name: host-usr
           hostPath:
             path: /usr
+        - name: host-usr-local
+          hostPath:
+            path: /usr/local
         - name: host-etc
           hostPath:
             path: /etc

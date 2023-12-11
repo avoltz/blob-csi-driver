@@ -145,8 +145,11 @@ func (m *Manager) MountVolume(account string, container string, suffix string, t
 	}, m.mountEndpoint)
 }
 
+//revive:disable:unused-parameter
 func (m *Manager) UnmountVolume(volumeID string, targetPath string) error {
 	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
 		return sendUnmount(csi_mounts.NewCSIMountsClient(conn), targetPath)
 	}, m.mountEndpoint)
 }
+
+//revive:enable:unused-parameter

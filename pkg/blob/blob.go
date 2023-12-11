@@ -156,10 +156,6 @@ var (
 type DriverOptions struct {
 	NodeID                                 string
 	DriverName                             string
-	CloudConfigSecretName                  string
-	CloudConfigSecretNamespace             string
-	CustomUserAgent                        string
-	UserAgentSuffix                        string
 	BlobfuseProxyEndpoint                  string
 	EdgeCacheConfigEndpoint                string
 	EdgeCacheMountEndpoint                 string
@@ -168,14 +164,11 @@ type DriverOptions struct {
 	BlobfuseProxyConnTimout                int
 	EdgeCacheConnTimeout                   int
 	EnableBlobMockMount                    bool
-	AllowEmptyCloudConfig                  bool
 	AllowInlineVolumeKeyAccessWithIdentity bool
 	EnableGetVolumeStats                   bool
 	AppendTimeStampInCacheDir              bool
 	AppendMountErrorHelpLink               bool
 	MountPermissions                       uint64
-	KubeAPIQPS                             float64
-	KubeAPIBurst                           int
 	EnableAznfsMount                       bool
 	VolStatsCacheExpireInMinutes           int
 	SasTokenExpirationMinutes              int
@@ -185,17 +178,12 @@ type DriverOptions struct {
 type Driver struct {
 	csicommon.CSIDriver
 
-	cloud                      *azure.Cloud
-	cloudConfigSecretName      string
-	cloudConfigSecretNamespace string
-	customUserAgent            string
-	userAgentSuffix            string
-	blobfuseProxyEndpoint      string
+	cloud                 *azure.Cloud
+	blobfuseProxyEndpoint string
 	// enableBlobMockMount is only for testing, DO NOT set as true in non-testing scenario
 	enableBlobMockMount                    bool
 	enableBlobfuseProxy                    bool
 	enableEdgeCacheFinalizer               bool
-	allowEmptyCloudConfig                  bool
 	enableGetVolumeStats                   bool
 	allowInlineVolumeKeyAccessWithIdentity bool
 	appendTimeStampInCacheDir              bool
@@ -203,8 +191,6 @@ type Driver struct {
 	blobfuseProxyConnTimout                int
 	mountPermissions                       uint64
 	edgeCacheManager                       *edgecache.Manager
-	kubeAPIQPS                             float64
-	kubeAPIBurst                           int
 	enableAznfsMount                       bool
 	mounter                                *mount.SafeFormatAndMount
 	volLockMap                             *util.LockMap
@@ -229,15 +215,11 @@ type Driver struct {
 
 // NewDriver Creates a NewCSIDriver object. Assumes vendor version is equal to driver version &
 // does not support optional driver plugin info manifest field. Refer to CSI spec for more details.
-func NewDriver(options *DriverOptions) *Driver {
+func NewDriver(options *DriverOptions, cloud *azure.Cloud) *Driver {
 	d := Driver{
 		volLockMap:                             util.NewLockMap(),
 		subnetLockMap:                          util.NewLockMap(),
 		volumeLocks:                            newVolumeLocks(),
-		cloudConfigSecretName:                  options.CloudConfigSecretName,
-		cloudConfigSecretNamespace:             options.CloudConfigSecretNamespace,
-		customUserAgent:                        options.CustomUserAgent,
-		userAgentSuffix:                        options.UserAgentSuffix,
 		blobfuseProxyEndpoint:                  options.BlobfuseProxyEndpoint,
 		edgeCacheManager:                       edgecache.NewManager(options.EdgeCacheConnTimeout, options.EdgeCacheMountEndpoint),
 		enableBlobfuseProxy:                    options.EnableBlobfuseProxy,
@@ -245,12 +227,9 @@ func NewDriver(options *DriverOptions) *Driver {
 		allowInlineVolumeKeyAccessWithIdentity: options.AllowInlineVolumeKeyAccessWithIdentity,
 		blobfuseProxyConnTimout:                options.BlobfuseProxyConnTimout,
 		enableBlobMockMount:                    options.EnableBlobMockMount,
-		allowEmptyCloudConfig:                  options.AllowEmptyCloudConfig,
 		enableGetVolumeStats:                   options.EnableGetVolumeStats,
 		appendMountErrorHelpLink:               options.AppendMountErrorHelpLink,
 		mountPermissions:                       options.MountPermissions,
-		kubeAPIQPS:                             options.KubeAPIQPS,
-		kubeAPIBurst:                           options.KubeAPIBurst,
 		enableAznfsMount:                       options.EnableAznfsMount,
 		sasTokenExpirationMinutes:              options.SasTokenExpirationMinutes,
 		azcopy:                                 &util.Azcopy{},
@@ -274,26 +253,7 @@ func NewDriver(options *DriverOptions) *Driver {
 	if d.volStatsCache, err = azcache.NewTimedCache(time.Duration(options.VolStatsCacheExpireInMinutes)*time.Minute, getter, false); err != nil {
 		klog.Fatalf("%v", err)
 	}
-	return &d
-}
-
-// Run driver initialization
-func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
-	versionMeta, err := GetVersionYAML(d.Name)
-	if err != nil {
-		klog.Fatalf("%v", err)
-	}
-	klog.Infof("\nDRIVER INFORMATION:\n-------------------\n%s\n\nStreaming logs below:", versionMeta)
-
-	userAgent := GetUserAgent(d.Name, d.customUserAgent, d.userAgentSuffix)
-	klog.V(2).Infof("driver userAgent: %s", userAgent)
-	d.cloud, err = getCloudProvider(kubeconfig, d.NodeID, d.cloudConfigSecretName, d.cloudConfigSecretNamespace, userAgent, d.allowEmptyCloudConfig, d.kubeAPIQPS, d.kubeAPIBurst)
-	if err != nil {
-		csicommon.SendKubeEvent(v1.EventTypeWarning, csicommon.FailedToInitializeDriver, csicommon.CSIEventSourceStr, fmt.Sprintf("failed to get Azure Cloud Provider, error: %v", err))
-		klog.Fatalf("failed to get Azure Cloud Provider, error: %v", err)
-	}
-	klog.V(2).Infof("cloud: %s, location: %s, rg: %s, VnetName: %s, VnetResourceGroup: %s, SubnetName: %s", d.cloud.Cloud, d.cloud.Location, d.cloud.ResourceGroup, d.cloud.VnetName, d.cloud.VnetResourceGroup, d.cloud.SubnetName)
-
+	d.cloud = cloud
 	d.mounter = &mount.SafeFormatAndMount{
 		Interface: mount.New(""),
 		Exec:      utilexec.New(),
@@ -327,6 +287,17 @@ func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
 		nodeCap = append(nodeCap, csi.NodeServiceCapability_RPC_GET_VOLUME_STATS)
 	}
 	d.AddNodeServiceCapabilities(nodeCap)
+
+	return &d
+}
+
+// Run driver initialization
+func (d *Driver) Run(endpoint string, testBool bool) {
+	versionMeta, err := GetVersionYAML(d.Name)
+	if err != nil {
+		klog.Fatalf("%v", err)
+	}
+	klog.Infof("\nDRIVER INFORMATION:\n-------------------\n%s\n\nStreaming logs below:", versionMeta)
 
 	s := csicommon.NewNonBlockingGRPCServer()
 	// Driver d act as IdentityServer, ControllerServer and NodeServer
@@ -738,6 +709,12 @@ func isSupportedContainerNamePrefix(prefix string) bool {
 		}
 	}
 	return true
+}
+
+// isNFSProtocol checks if the protocol is NFS or AZNFS
+func isNFSProtocol(protocol string) bool {
+	protocol = strings.ToLower(protocol)
+	return protocol == NFS || protocol == AZNFS
 }
 
 // get storage account from secrets map

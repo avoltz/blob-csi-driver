@@ -6,7 +6,7 @@ image:
     pullPolicy: IfNotPresent
   csiProvisioner:
     repository: /oss/kubernetes-csi/csi-provisioner
-    tag: v3.5.0
+    tag: v3.6.2
     pullPolicy: IfNotPresent
   livenessProbe:
     repository: /oss/kubernetes-csi/livenessprobe
@@ -14,11 +14,11 @@ image:
     pullPolicy: IfNotPresent
   nodeDriverRegistrar:
     repository: /oss/kubernetes-csi/csi-node-driver-registrar
-    tag: v2.8.0
+    tag: v2.9.1
     pullPolicy: IfNotPresent
   csiResizer:
     repository: /oss/kubernetes-csi/csi-resizer
-    tag: v1.8.0
+    tag: v1.9.2
     pullPolicy: IfNotPresent
 
 cloud: AzurePublicCloud
@@ -114,12 +114,12 @@ node:
   livenessProbe:
     healthPort: 29633
   logLevel: 5
-  enableBlobfuseProxy: false
+  enableBlobfuseProxy: true
   blobfuseProxy:
     installBlobfuse: true
     blobfuseVersion: "1.4.5"
     installBlobfuse2: true
-    blobfuse2Version: "2.0.3"
+    blobfuse2Version: "2.1.2"
     setMaxOpenFileNum: true
     maxOpenFileNum: "9000000"
     disableUpdateDB: true

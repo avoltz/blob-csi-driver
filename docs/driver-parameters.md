@@ -19,7 +19,7 @@
 
 Name | Meaning | Example | Mandatory | Default value
 --- | --- | --- | --- | ---
-skuName | Azure storage account type (alias: `storageAccountType`) | `Standard_LRS`, `Premium_LRS`, `Standard_GRS`, `Standard_RAGRS` | No | `Standard_LRS`
+skuName | Azure storage account type (alias: `storageAccountType`) | `Standard_LRS`, `Premium_LRS`, `Standard_GRS`, `Standard_RAGRS`, `Standard_ZRS`, `Premium_ZRS`  | No | `Standard_LRS`
 location | Azure location | `eastus`, `westus`, etc. | No | if empty, driver will use the same location name as current k8s cluster
 resourceGroup | Azure resource group name | existing resource group name | No | if empty, driver will use the same resource group name as current k8s cluster
 storageAccount | specify Azure storage account name| STORAGE_ACCOUNT_NAME | No | If the driver is not provided with a specific storage account name, it will search for a suitable storage account that matches the account settings within the same resource group. If it cannot find a matching storage account, it will create a new one. However, if a storage account name is specified, the storage account must already exist.
@@ -129,6 +129,7 @@ kubectl create secret generic azure-secret --from-literal azurestoragespnclients
    - with blobfuse-proxy deployment (default on AKS), user could set `--tmp-path=` mount option to specify a different cache directory
  - [Mount an azure blob storage with a dedicated user-assigned managed identity](https://github.com/qxsch/Azure-Aks/tree/master/aks-blobfuse-mi)
  - [Blobfuse Performance and caching](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#performance-and-caching)
+   - `--disable-writeback-cache=true`: disallow libfuse to buffer write requests if you must strictly open files in O_WRONLY or O_APPEND mode
  - [Blobfuse CLI Flag Options v1 & v2](https://github.com/Azure/azure-storage-fuse/blob/main/MIGRATION.md#blobfuse-cli-flag-options)
 
 #### `containerName` parameter supports following pv/pvc metadata conversion
