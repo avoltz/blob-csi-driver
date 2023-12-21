@@ -54,6 +54,7 @@ var (
 	customUserAgent                        = flag.String("custom-user-agent", "", "custom userAgent")
 	userAgentSuffix                        = flag.String("user-agent-suffix", "", "userAgent suffix")
 	allowEmptyCloudConfig                  = flag.Bool("allow-empty-cloud-config", true, "allow running driver without cloud config")
+	allowCloudConfigFromEnv                = flag.Bool("allow-cloud-config-from-env", true, "allow parsing cloud config from env")
 	enableGetVolumeStats                   = flag.Bool("enable-get-volume-stats", false, "allow GET_VOLUME_STATS on agent node")
 	appendTimeStampInCacheDir              = flag.Bool("append-timestamp-cache-dir", false, "append timestamp into cache directory on agent node")
 	mountPermissions                       = flag.Uint64("mount-permissions", 0777, "mounted folder permissions")
@@ -97,6 +98,7 @@ func handle() {
 		CustomUserAgent:                        *customUserAgent,
 		UserAgentSuffix:                        *userAgentSuffix,
 		AllowEmptyCloudConfig:                  *allowEmptyCloudConfig,
+		AllowCloudConfigFromEnv:                *allowCloudConfigFromEnv,
 		EnableGetVolumeStats:                   *enableGetVolumeStats,
 		AppendTimeStampInCacheDir:              *appendTimeStampInCacheDir,
 		MountPermissions:                       *mountPermissions,

@@ -39,11 +39,37 @@ import (
 	providerconfig "sigs.k8s.io/cloud-provider-azure/pkg/provider/config"
 )
 
+// Env vars
+const (
+	CloudNameEnvVar = "AZURE_CLOUD_NAME"
+	ResourceID      = "AZURE_RESOURCE_ID"
+	LocationEnvVar  = "AZURE_LOCATION"
+)
+
 var (
 	DefaultAzureCredentialFileEnv = "AZURE_CREDENTIAL_FILE"
 	DefaultCredFilePath           = "/etc/kubernetes/azure.json"
 	storageService                = "Microsoft.Storage"
 )
+
+type ResourceGroupInfo struct {
+	Subscription  string
+	ResourceGroup string
+}
+
+func ParseResourceGroupInfo(resourceID string) ResourceGroupInfo {
+	components := strings.Split(resourceID, "/")
+	info := ResourceGroupInfo{}
+	if len(components) >= 3 && components[1] == "subscriptions" {
+		info.Subscription = components[2]
+	}
+
+	if len(components) >= 5 && components[3] == "resourceGroups" {
+		info.ResourceGroup = components[4]
+	}
+
+	return info
+}
 
 // IsAzureStackCloud decides whether the driver is running on Azure Stack Cloud.
 func IsAzureStackCloud(cloud *azure.Cloud) bool {
@@ -51,7 +77,7 @@ func IsAzureStackCloud(cloud *azure.Cloud) bool {
 }
 
 // getCloudProvider get Azure Cloud Provider
-func getCloudProvider(kubeconfig, nodeID, secretName, secretNamespace, userAgent string, allowEmptyCloudConfig bool, kubeAPIQPS float64, kubeAPIBurst int) (*azure.Cloud, error) {
+func getCloudProvider(kubeconfig, nodeID, secretName, secretNamespace, userAgent string, allowEmptyCloudConfig bool, allowCloudConfigFromEnv bool, kubeAPIQPS float64, kubeAPIBurst int) (*azure.Cloud, error) {
 	var (
 		config     *azure.Config
 		kubeClient *clientset.Clientset
@@ -126,6 +152,20 @@ func getCloudProvider(kubeconfig, nodeID, secretName, secretNamespace, userAgent
 				klog.Warningf("parse config file(%s) failed with error: %v", credFile, err)
 			}
 		}
+	}
+
+	// We fall back to reading env vars if no config has been found. This is primarily used
+	// in Arc-based configurations where we don't have a cloud secret, or `/etc/kubernetes/azure.json`
+	// file. These values can be injected from the arc infra, though.
+	if config == nil && allowCloudConfigFromEnv {
+		klog.V(2).Infof("Will fall back to use environmental config")
+		config = &azure.Config{}
+
+		config.Cloud = os.Getenv(CloudNameEnvVar)
+		resourceInfo := ParseResourceGroupInfo(os.Getenv(ResourceID))
+		config.SubscriptionID = resourceInfo.Subscription
+		config.ResourceGroup = resourceInfo.ResourceGroup
+		config.Location = os.Getenv(LocationEnvVar)
 	}
 
 	if config == nil {

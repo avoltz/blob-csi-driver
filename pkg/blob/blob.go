@@ -160,6 +160,7 @@ type DriverOptions struct {
 	EdgeCacheConnTimeout                   int
 	EnableBlobMockMount                    bool
 	AllowEmptyCloudConfig                  bool
+	AllowCloudConfigFromEnv                bool
 	AllowInlineVolumeKeyAccessWithIdentity bool
 	EnableGetVolumeStats                   bool
 	AppendTimeStampInCacheDir              bool
@@ -184,6 +185,7 @@ type Driver struct {
 	enableBlobfuseProxy                    bool
 	enableEdgeCacheFinalizer               bool
 	allowEmptyCloudConfig                  bool
+	allowCloudConfigFromEnv                bool
 	enableGetVolumeStats                   bool
 	allowInlineVolumeKeyAccessWithIdentity bool
 	appendTimeStampInCacheDir              bool
@@ -258,7 +260,7 @@ func (d *Driver) Run(endpoint, kubeconfig string, testBool bool) {
 
 	userAgent := GetUserAgent(d.Name, d.customUserAgent, d.userAgentSuffix)
 	klog.V(2).Infof("driver userAgent: %s", userAgent)
-	d.cloud, err = getCloudProvider(kubeconfig, d.NodeID, d.cloudConfigSecretName, d.cloudConfigSecretNamespace, userAgent, d.allowEmptyCloudConfig, d.kubeAPIQPS, d.kubeAPIBurst)
+	d.cloud, err = getCloudProvider(kubeconfig, d.NodeID, d.cloudConfigSecretName, d.cloudConfigSecretNamespace, userAgent, d.allowEmptyCloudConfig, d.allowCloudConfigFromEnv, d.kubeAPIQPS, d.kubeAPIBurst)
 	if err != nil {
 		klog.Fatalf("failed to get Azure Cloud Provider, error: %v", err)
 	}
