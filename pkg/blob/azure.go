@@ -88,17 +88,6 @@ func GetCloudProvider(ctx context.Context, kubeconfig, nodeID, secretName, secre
 		}, nil)
 		if err == nil && config != nil {
 			fromSecret = true
-
-			if tenantID := os.Getenv("AZURE_TENANT_ID"); tenantID != "" {
-				config.TenantID = tenantID
-			}
-			if clientID := os.Getenv("AZURE_CLIENT_ID"); clientID != "" {
-				config.AADClientID = clientID
-			}
-			if federatedTokenFile := os.Getenv("AZURE_FEDERATED_TOKEN_FILE"); federatedTokenFile != "" {
-				config.AADFederatedTokenFile = federatedTokenFile
-				config.UseFederatedWorkloadIdentityExtension = true
-			}
 		}
 		if err != nil {
 			klog.V(2).Infof("InitializeCloudFromSecret: failed to get cloud config from secret %s/%s: %v", secretNamespace, secretName, err)
@@ -130,6 +119,17 @@ func GetCloudProvider(ctx context.Context, kubeconfig, nodeID, secretName, secre
 			return az, fmt.Errorf("no cloud config provided, error: %w", err)
 		}
 	} else {
+		if tenantID := os.Getenv("AZURE_TENANT_ID"); tenantID != "" {
+			config.TenantID = tenantID
+		}
+		if clientID := os.Getenv("AZURE_CLIENT_ID"); clientID != "" {
+			config.AADClientID = clientID
+		}
+		if federatedTokenFile := os.Getenv("AZURE_FEDERATED_TOKEN_FILE"); federatedTokenFile != "" {
+			config.AADFederatedTokenFile = federatedTokenFile
+			config.UseFederatedWorkloadIdentityExtension = true
+		}
+
 		config.UserAgent = userAgent
 		config.CloudProviderBackoff = true
 		if err = az.InitializeCloudFromConfig(context.TODO(), config, fromSecret, false); err != nil {
