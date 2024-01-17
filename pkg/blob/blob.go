@@ -382,6 +382,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 		subsID                  string
 		accountKey              string
 		accountSasToken         string
+		ecStorageAuth           string
 		msiSecret               string
 		storageSPNClientSecret  string
 		storageSPNClientID      string
@@ -444,6 +445,8 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 			if getLatestAccountKey, err = strconv.ParseBool(v); err != nil {
 				return rgName, accountName, accountKey, containerName, secretName, secretNamespace, authEnv, fmt.Errorf("invalid %s: %s in volume context", getLatestAccountKeyField, v)
 			}
+		case EcStrgAuthenticationField:
+			ecStorageAuth = v
 		}
 	}
 	klog.V(2).Infof("volumeID(%s) authEnv: %s", volumeID, authEnv)
@@ -479,7 +482,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 			accountKey = key
 		}
 	} else {
-		if len(secrets) == 0 {
+		if len(secrets) == 0 && ecStorageAuth != "WorkloadIdentity" {
 			if secretName == "" && accountName != "" {
 				secretName = fmt.Sprintf(secretNameTemplate, accountName)
 			}
