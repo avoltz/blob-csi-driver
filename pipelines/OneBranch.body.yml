@@ -69,6 +69,23 @@ stages:
       TOOLCHAIN_IMAGE: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.TOOLCHAIN_IMAGE'] ]
       pipelineBuildTag: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.VERSION_TAG'] ]
     jobs:
+    - job: build_for_codeql
+      timeoutInMinutes: 30
+      displayName: Build for codeql analysis
+      pool:
+        type: linux
+      variables:
+        ob_outputDirectory: "$(Build.ArtifactStagingDirectory)/out"
+      steps:
+        - task: CodeQL3000Init@0
+          displayName: CodeQL initialize
+        - bash: |
+            make
+          displayName: Run make
+          name: makeCsi
+        - task: CodeQL3000Finalize@0
+          displayName: CodeQL finalize
+
     - ${{ each arch in parameters.architectures }}:
       - job: build_csi_container_${{ arch }}
         timeoutInMinutes: 60
