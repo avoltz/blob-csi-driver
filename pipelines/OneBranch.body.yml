@@ -84,6 +84,20 @@ stages:
         - task: CodeQL3000Init@0
           displayName: CodeQL initialize
         - bash: |
+            set -ex
+            # Add a workaround to allow indirect tracing for the go code
+            # inspired by: https://github.com/github/codeql-action/pull/1909
+            #
+            WORKAROUND_DIR=$(mktemp -d)
+            WHICH_GO=$(which go)
+            cat > "${WORKAROUND_DIR}/go" <<EOF
+            #!/bin/bash
+            exec $WHICH_GO "\$@"
+            EOF
+
+            chmod 755 "${WORKAROUND_DIR}/go"
+            export PATH="${WORKAROUND_DIR}:${PATH}"
+
             make
           displayName: Run make
           name: makeCsi
