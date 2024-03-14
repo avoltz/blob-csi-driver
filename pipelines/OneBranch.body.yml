@@ -72,6 +72,10 @@ stages:
     - job: build_for_codeql
       timeoutInMinutes: 30
       displayName: Build for codeql analysis
+      condition: or(
+        eq(variables['Build.SourceBranch'], 'refs/heads/staging'),
+        ne(variables['ForceCodeQL'], '')
+        )
       pool:
         type: linux
       variables:
