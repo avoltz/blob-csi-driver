@@ -89,6 +89,7 @@ stages:
             # inspired by: https://github.com/github/codeql-action/pull/1909
             #
             WORKAROUND_DIR=$(mktemp -d)
+            # We may need to use a task to pick the go version if this breaks
             WHICH_GO=$(which go)
             cat > "${WORKAROUND_DIR}/go" <<EOF
             #!/bin/bash
