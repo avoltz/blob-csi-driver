@@ -69,6 +69,42 @@ stages:
       TOOLCHAIN_IMAGE: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.TOOLCHAIN_IMAGE'] ]
       pipelineBuildTag: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.VERSION_TAG'] ]
     jobs:
+    - job: build_for_codeql
+      timeoutInMinutes: 30
+      displayName: Build for codeql analysis
+      condition: or(
+        eq(variables['Build.SourceBranch'], 'refs/heads/staging'),
+        ne(variables['ForceCodeQL'], '')
+        )
+      pool:
+        type: linux
+      variables:
+        ob_outputDirectory: "$(Build.ArtifactStagingDirectory)/out"
+      steps:
+        - task: CodeQL3000Init@0
+          displayName: CodeQL initialize
+        - bash: |
+            set -ex
+            # Add a workaround to allow indirect tracing for the go code
+            # inspired by: https://github.com/github/codeql-action/pull/1909
+            #
+            WORKAROUND_DIR=$(mktemp -d)
+            # We may need to use a task to pick the go version if this breaks
+            WHICH_GO=$(which go)
+            cat > "${WORKAROUND_DIR}/go" <<EOF
+            #!/bin/bash
+            exec $WHICH_GO "\$@"
+            EOF
+
+            chmod 755 "${WORKAROUND_DIR}/go"
+            export PATH="${WORKAROUND_DIR}:${PATH}"
+
+            make
+          displayName: Run make
+          name: makeCsi
+        - task: CodeQL3000Finalize@0
+          displayName: CodeQL finalize
+
     - ${{ each arch in parameters.architectures }}:
       - job: build_csi_container_${{ arch }}
         timeoutInMinutes: 60
