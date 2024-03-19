@@ -386,7 +386,7 @@ entries:
       digest: 381a7a9b7f95311dfae0681d91a96d11be30b743624cf4a56eb5877adb28f618
       name: blob-csi-driver
       urls:
-        - https://raw.githubusercontent.com/avoltz/blob-csi-driver/staging/charts/v4.8.0/blob-csi-driver-v4.8.0.tgz
+        - https://raw.githubusercontent.com/avoltz/blob-csi-driver/user/silindbl/test-include-volume-id-mount/charts/v4.8.0/blob-csi-driver-v4.8.0.tgz
       version: v4.8.0
     - apiVersion: v1
       appVersion: latest
