@@ -13,6 +13,7 @@ service CSIMounts {
 
 message VolumeInfo {
   oneof volume_info { blob_cache_volume.Name blob_volume = 1; }
+  optional string volume_id = 2;
 }
 
 message AddMountReq {

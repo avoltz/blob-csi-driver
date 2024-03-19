@@ -388,7 +388,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.NodeStagingVolume, csicommon.CSIEventSourceStr,
 			fmt.Sprintf("NodeStageVolume: Mounting volume %s", volumeID))
 		klog.V(2).Infof("NodeStageVolume: Mounting volume(%s) on %s", volumeID, targetPath)
-		if err = d.edgeCacheManager.MountVolume(accountName, containerName, storageEndpointSuffix, targetPath); err != nil {
+		if err = d.edgeCacheManager.MountVolume(accountName, containerName, storageEndpointSuffix, targetPath, string(pv.ObjectMeta.UID)); err != nil {
 			return nil, err
 		}
 		csicommon.SendKubeEvent(v1.EventTypeNormal, csicommon.NodeStagedVolume, csicommon.CSIEventSourceStr,

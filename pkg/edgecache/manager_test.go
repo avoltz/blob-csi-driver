@@ -46,6 +46,7 @@ func TestSendMount(t *testing.T) {
 	account := "account"
 	container := "container"
 	suffix := "my.url.org"
+	volumeID := "test-id"
 	vol := blob_cache_volume.Name{
 		Account:       &account,
 		Container:     &container,
@@ -57,6 +58,7 @@ func TestSendMount(t *testing.T) {
 			VolumeInfo: &csi_mounts.VolumeInfo_BlobVolume{
 				BlobVolume: &vol,
 			},
+			VolumeId: &volumeID,
 		},
 	}
 	interval := time.Duration(1 * time.Millisecond)
@@ -64,7 +66,7 @@ func TestSendMount(t *testing.T) {
 	t.Run("WorksFirstTry", func(t *testing.T) {
 		client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
 		client.EXPECT().AddMount(gomock.Any(), &addReq).Times(1).Return(&successRsp, nil)
-		ret := sendMount(client, account, container, suffix, targetPath, interval, timeout)
+		ret := sendMount(client, account, container, suffix, volumeID, targetPath, interval, timeout)
 		assert.Nil(t, ret)
 	})
 	t.Run("WorksWithRetries", func(t *testing.T) {
@@ -73,20 +75,20 @@ func TestSendMount(t *testing.T) {
 			client.EXPECT().AddMount(gomock.Any(), &addReq).Return(nil, status.Errorf(codes.Internal, "")),
 			client.EXPECT().AddMount(gomock.Any(), &addReq).Return(&successRsp, nil),
 		)
-		ret := sendMount(client, account, container, suffix, targetPath, interval, timeout)
+		ret := sendMount(client, account, container, suffix, volumeID, targetPath, interval, timeout)
 		assert.Nil(t, ret)
 	})
 	t.Run("CancelsEventually", func(t *testing.T) {
 		client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
 		client.EXPECT().AddMount(gomock.Any(), &addReq).MinTimes(1).Return(nil, status.Errorf(codes.DeadlineExceeded, ""))
-		ret := sendMount(client, account, container, suffix, targetPath, interval, timeout)
+		ret := sendMount(client, account, container, suffix, volumeID, targetPath, interval, timeout)
 		assert.NotNil(t, ret)
 	})
 	// use large interval to force outer timeout cancellation
 	t.Run("TimeoutCancels", func(t *testing.T) {
 		client := mock_csi_mounts.NewMockCSIMountsClient(ctrl)
 		client.EXPECT().AddMount(gomock.Any(), &addReq).Times(1).Return(nil, status.Errorf(codes.Internal, ""))
-		err := sendMount(client, account, container, suffix, targetPath, 1*time.Second, 10*time.Millisecond)
+		err := sendMount(client, account, container, suffix, volumeID, targetPath, 1*time.Second, 10*time.Millisecond)
 		if statusErr, ok := status.FromError(err); ok {
 			assert.Equal(t, statusErr.Code(), codes.DeadlineExceeded)
 		} else {

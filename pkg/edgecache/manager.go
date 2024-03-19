@@ -63,7 +63,7 @@ func GetStagingPath(path string) string {
 	return filepath.Join(path, "edgecache")
 }
 
-func sendMount(client csi_mounts.CSIMountsClient, account string, container string, suffix string, targetPath string, interval time.Duration, timeout time.Duration) error {
+func sendMount(client csi_mounts.CSIMountsClient, account, container, suffix, pvID string, targetPath string, interval time.Duration, timeout time.Duration) error {
 	blobVolume := blob_cache_volume.Name{
 		Account:       &account,
 		Container:     &container,
@@ -75,6 +75,7 @@ func sendMount(client csi_mounts.CSIMountsClient, account string, container stri
 			VolumeInfo: &csi_mounts.VolumeInfo_BlobVolume{
 				BlobVolume: &blobVolume,
 			},
+			VolumeId: &pvID,
 		},
 	}
 
@@ -86,7 +87,7 @@ func sendMount(client csi_mounts.CSIMountsClient, account string, container stri
 	result := make(chan bool)
 	go func() {
 		for {
-			klog.V(3).Infof("AddMount: %s, %s, %s, %s", suffix, account, container, targetPath)
+			klog.V(3).Infof("AddMount: %s, %s, %s, %s, %s", suffix, account, container, pvID, targetPath)
 			_, err := client.AddMount(context.TODO(), &addReq)
 			if err != nil {
 				klog.Warningf("AddMount GRPC failed (will retry) returned with an error: %v", err)
@@ -139,9 +140,9 @@ func (m *Manager) callWithConnection(fun ConnectionUsingFunc, endpoint string) e
 	return fun(conn)
 }
 
-func (m *Manager) MountVolume(account string, container string, suffix string, targetPath string) error {
+func (m *Manager) MountVolume(account string, container string, suffix string, targetPath string, pvID string) error {
 	return m.callWithConnection(func(conn grpc.ClientConnInterface) error {
-		return sendMount(csi_mounts.NewCSIMountsClient(conn), account, container, suffix, targetPath, 500*time.Millisecond, 30*time.Second)
+		return sendMount(csi_mounts.NewCSIMountsClient(conn), account, container, suffix, pvID, targetPath, 500*time.Millisecond, 30*time.Second)
 	}, m.mountEndpoint)
 }
 

@@ -7,20 +7,23 @@ package blob_cache_volume;
 
 message Authenticator {
   oneof authenticator {
-    string account_key = 1;
+    bool account_key = 1;
     string managed_system_identity = 2;
     bool workload_identity = 3;
+    string redis_account_key = 4;
   }
 }
 
 message Name {
   optional string account = 1;
   optional string container = 2;
-  optional string storage_suffix = 3; // storage suffix url, defaults to 'core.windows.net'
+  // storage suffix url, defaults to 'core.windows.net'
+  optional string storage_suffix = 3;
 }
 
 message BlobCacheVolume {
   optional Name name = 1;
   optional Authenticator auth = 2;
   optional default_attributes.DefaultAttributes default_attributes = 3;
+  optional string volume_id = 4;
 }
