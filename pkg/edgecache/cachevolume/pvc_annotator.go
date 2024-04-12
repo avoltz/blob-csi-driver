@@ -44,7 +44,7 @@ const (
 )
 
 var (
-	validStorageAuthentications      = []string{"WorkloadIdentity", "AccountKey"}
+	validStorageAuthentications      = []string{"WorkloadIdentity", "ManagedSystemIdentity", "AccountKey"}
 	ErrVolumeAlreadyBeingProvisioned = errors.New("pv is already being provisioned")
 )
 
