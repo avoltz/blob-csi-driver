@@ -67,7 +67,6 @@ stages:
       - setup
     variables:
       TOOLCHAIN_IMAGE: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.TOOLCHAIN_IMAGE'] ]
-      pipelineBuildTag: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.VERSION_TAG'] ]
     jobs:
     - job: build_for_codeql
       timeoutInMinutes: 30
@@ -150,14 +149,13 @@ stages:
               enable_cache: true # take advantage of multi-stage caching
               endpoint: "${{ parameters.acr }}-acr-connection"
               arguments: --build-arg ARCH=${{ arch }} --build-arg BUILD_IMAGE=$(TOOLCHAIN_IMAGE)
-              build_tag: "$(pipelineBuildTag)-${{ arch }}"
+              build_tag: "$(ESA_BUILD_VERSION)-${{ arch }}"
 
   - stage: publish
     dependsOn:
       - setup
       - build
     variables:
-      pipelineBuildTag: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.VERSION_TAG'] ]
       blobCsiVersion: $[ stageDependencies.setup.Setup.outputs['setupEnvironment.BLOB_CSI_VERSION'] ]
       HYDRA_REPO_PREFIX: "artifact/$(ServiceTreeId)/$(ONEBRANCH_BUILD_TYPE)/"
     jobs:
@@ -187,6 +185,7 @@ stages:
           - template: pipelines/templates/make_images_multiarch.yml@Hydra
             parameters:
               hydraRepoPrefix: "$(HYDRA_REPO_PREFIX)"
+              buildTag: $(ESA_BUILD_VERSION)
               acr: "${{ parameters.acr }}"
               architectures: ${{ parameters.architectures }}
               images:
@@ -214,9 +213,10 @@ stages:
             parameters:
               condition: and(eq(variables.IsOfficial, 'True'), eq(variables.IsStaging, 'True'), eq(variables['pushLatest'], 'true'))
               hydraRepoPrefix: "$(HYDRA_REPO_PREFIX)"
-              acr: "${{ parameters.acr }}"
-              dstBuildTag: "$(blobCsiVersion)"
-              srcBuildTag: "$(pipelineBuildTag)"
+              srcAcr: "${{ parameters.acr }}"
+              srcBuildTag: "$(ESA_BUILD_VERSION)"
+              dstAcr: "${{ parameters.acr }}"
+              latestTag: "$(blobCsiVersion)"
               images:
                 - $(BlobImageRepo)
 
