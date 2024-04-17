@@ -115,6 +115,13 @@ stages:
           hostArchitecture: ${{ arch }}
         variables:
           ob_git_checkout: true
+          # Fixes issues in 'Attach Payload' tasks like the following
+          #   Traceback (most recent call last):
+          #     File "/mnt/vss/_work/1/b/2/_work/_tasks/1ESGPTRunTask_99645293-d90d-4e16-b7b6-ca10044e8ce6/3.0.102/scripts/attach_payload_to_image.py", line 6, in <module>
+          #       import cbor2
+          #   ModuleNotFoundError: No module named 'cbor2'
+          ${{ if eq(arch, 'arm64') }}:
+            ob_containers_signing_enabled: false
         steps:
           - template: pipelines/templates/job_start.yml@Hydra
             parameters:
