@@ -482,7 +482,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 			accountKey = key
 		}
 	} else {
-		if len(secrets) == 0 && ecStorageAuth != "WorkloadIdentity" {
+		if len(secrets) == 0 && ecStorageAuth != "WorkloadIdentity" && ecStorageAuth != "ManagedSystemIdentity" {
 			if secretName == "" && accountName != "" {
 				secretName = fmt.Sprintf(secretNameTemplate, accountName)
 			}
