@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 func TestRoundUpBytes(t *testing.T) {
@@ -505,14 +505,14 @@ func TestGetAzcopyJob(t *testing.T) {
 		defer ctrl.Finish()
 
 		m := NewMockEXEC(ctrl)
-		m.EXPECT().RunCommand(gomock.Eq("azcopy jobs list | grep dstBlobContainer -B 3")).Return(test.listStr, test.listErr)
+		m.EXPECT().RunCommand(gomock.Eq("azcopy jobs list | grep dstBlobContainer -B 3"), []string{}).Return(test.listStr, test.listErr)
 		if test.enableShow {
-			m.EXPECT().RunCommand(gomock.Not("azcopy jobs list | grep dstBlobContainer -B 3")).Return(test.showStr, test.showErr)
+			m.EXPECT().RunCommand(gomock.Not("azcopy jobs list | grep dstBlobContainer -B 3"), []string{}).Return(test.showStr, test.showErr)
 		}
 
 		azcopyFunc := &Azcopy{}
 		azcopyFunc.ExecCmd = m
-		jobState, percent, err := azcopyFunc.GetAzcopyJob(dstBlobContainer)
+		jobState, percent, err := azcopyFunc.GetAzcopyJob(dstBlobContainer, []string{})
 		if jobState != test.expectedJobState || percent != test.expectedPercent || !reflect.DeepEqual(err, test.expectedErr) {
 			t.Errorf("test[%s]: unexpected jobState: %v, percent: %v, err: %v, expected jobState: %v, percent: %v, err: %v", test.desc, jobState, percent, err, test.expectedJobState, test.expectedPercent, test.expectedErr)
 		}
@@ -607,6 +607,190 @@ func TestParseAzcopyJobShow(t *testing.T) {
 		jobState, percent, err := parseAzcopyJobShow(test.str)
 		if jobState != test.expectedJobState || percent != test.expectedPercent || !reflect.DeepEqual(err, test.expectedErr) {
 			t.Errorf("test[%s]: unexpected jobState: %v, percent: %v, err: %v, expected jobState: %v, percent: %v, err: %v", test.desc, jobState, percent, err, test.expectedJobState, test.expectedPercent, test.expectedErr)
+		}
+	}
+}
+
+func TestGetKubeConfig(t *testing.T) {
+	emptyKubeConfig := "empty-Kube-Config"
+	validKubeConfig := "valid-Kube-Config"
+	nonexistingConfig := "nonexisting-config"
+	fakeContent := `
+apiVersion: v1
+clusters:
+- cluster:
+    server: https://localhost:8080
+  name: foo-cluster
+contexts:
+- context:
+    cluster: foo-cluster
+    user: foo-user
+    namespace: bar
+  name: foo-context
+current-context: foo-context
+kind: Config
+users:
+- name: foo-user
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      args:
+      - arg-1
+      - arg-2
+      command: foo-command
+`
+	if err := os.WriteFile(validKubeConfig, []byte(""), 0666); err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(emptyKubeConfig)
+	if err := os.WriteFile(validKubeConfig, []byte(fakeContent), 0666); err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(validKubeConfig)
+
+	tests := []struct {
+		desc                     string
+		kubeconfig               string
+		expectError              bool
+		envVariableHasConfig     bool
+		envVariableConfigIsValid bool
+	}{
+		{
+			desc:                     "[success] valid kube config passed",
+			kubeconfig:               validKubeConfig,
+			expectError:              false,
+			envVariableHasConfig:     false,
+			envVariableConfigIsValid: false,
+		},
+		{
+			desc:                     "[failure] invalid kube config passed",
+			kubeconfig:               emptyKubeConfig,
+			expectError:              true,
+			envVariableHasConfig:     false,
+			envVariableConfigIsValid: false,
+		},
+		{
+			desc:                     "[failure] invalid kube config passed",
+			kubeconfig:               nonexistingConfig,
+			expectError:              true,
+			envVariableHasConfig:     false,
+			envVariableConfigIsValid: false,
+		},
+	}
+
+	for _, test := range tests {
+		_, err := GetKubeClient(test.kubeconfig, 25.0, 50, "")
+		receiveError := (err != nil)
+		if test.expectError != receiveError {
+			t.Errorf("desc: %s,\n input: %q, GetCloudProvider err: %v, expectErr: %v", test.desc, test.kubeconfig, err, test.expectError)
+		}
+	}
+}
+
+func TestSetVolumeOwnership(t *testing.T) {
+	tmpVDir, err := os.MkdirTemp(os.TempDir(), "SetVolumeOwnership")
+	if err != nil {
+		t.Fatalf("can't make a temp dir: %v", err)
+	}
+	//deferred clean up
+	defer os.RemoveAll(tmpVDir)
+
+	tests := []struct {
+		path                string
+		gid                 string
+		fsGroupChangePolicy string
+		expectedError       error
+	}{
+		{
+			path:          "path",
+			gid:           "",
+			expectedError: fmt.Errorf("convert %s to int failed with %v", "", `strconv.Atoi: parsing "": invalid syntax`),
+		},
+		{
+			path:          "path",
+			gid:           "alpha",
+			expectedError: fmt.Errorf("convert %s to int failed with %v", "alpha", `strconv.Atoi: parsing "alpha": invalid syntax`),
+		},
+		{
+			path:          "not-exists",
+			gid:           "1000",
+			expectedError: fmt.Errorf("lstat not-exists: no such file or directory"),
+		},
+		{
+			path:          tmpVDir,
+			gid:           "1000",
+			expectedError: nil,
+		},
+		{
+			path:                tmpVDir,
+			gid:                 "1000",
+			fsGroupChangePolicy: "Always",
+			expectedError:       nil,
+		},
+		{
+			path:                tmpVDir,
+			gid:                 "1000",
+			fsGroupChangePolicy: "OnRootMismatch",
+			expectedError:       nil,
+		},
+	}
+
+	for _, test := range tests {
+		err := SetVolumeOwnership(test.path, test.gid, test.fsGroupChangePolicy)
+		if err != nil && (err.Error() != test.expectedError.Error()) {
+			t.Errorf("unexpected error: %v, expected error: %v", err, test.expectedError)
+		}
+	}
+}
+
+func TestWaitUntilTimeout(t *testing.T) {
+	tests := []struct {
+		desc        string
+		timeout     time.Duration
+		execFunc    ExecFunc
+		timeoutFunc TimeoutFunc
+		expectedErr error
+	}{
+		{
+			desc:    "execFunc returns error",
+			timeout: 1 * time.Second,
+			execFunc: func() error {
+				return fmt.Errorf("execFunc error")
+			},
+			timeoutFunc: func() error {
+				return fmt.Errorf("timeout error")
+			},
+			expectedErr: fmt.Errorf("execFunc error"),
+		},
+		{
+			desc:    "execFunc timeout",
+			timeout: 1 * time.Second,
+			execFunc: func() error {
+				time.Sleep(2 * time.Second)
+				return nil
+			},
+			timeoutFunc: func() error {
+				return fmt.Errorf("timeout error")
+			},
+			expectedErr: fmt.Errorf("timeout error"),
+		},
+		{
+			desc:    "execFunc completed successfully",
+			timeout: 1 * time.Second,
+			execFunc: func() error {
+				return nil
+			},
+			timeoutFunc: func() error {
+				return fmt.Errorf("timeout error")
+			},
+			expectedErr: nil,
+		},
+	}
+
+	for _, test := range tests {
+		err := WaitUntilTimeout(test.timeout, test.execFunc, test.timeoutFunc)
+		if err != nil && (err.Error() != test.expectedErr.Error()) {
+			t.Errorf("unexpected error: %v, expected error: %v", err, test.expectedErr)
 		}
 	}
 }

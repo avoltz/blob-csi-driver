@@ -58,7 +58,7 @@ spec:
             - name: INSTALL_BLOBFUSE2
               value: "true"
             - name: BLOBFUSE2_VERSION
-              value: "2.1.2"
+              value: "2.2.1"
             - name: SET_MAX_OPEN_FILE_NUM
               value: "true"
             - name: MAX_FILE_NUM
@@ -77,11 +77,11 @@ spec:
           volumeMounts:
             - mountPath: /csi
               name: socket-dir
-          image: mcr.microsoft.com/oss/kubernetes-csi/livenessprobe:v2.11.0
+          image: mcr.microsoft.com/oss/kubernetes-csi/livenessprobe:v2.12.0
           args:
             - --csi-address=/csi/csi.sock
             - --probe-timeout=3s
-            - --health-port=29633
+            - --http-endpoint=localhost:29633
             - --v=2
           resources:
             limits:
@@ -90,7 +90,7 @@ spec:
               cpu: 10m
               memory: 20Mi
         - name: node-driver-registrar
-          image: mcr.microsoft.com/oss/kubernetes-csi/csi-node-driver-registrar:v2.9.1
+          image: mcr.microsoft.com/oss/kubernetes-csi/csi-node-driver-registrar:v2.10.0
           args:
             - --csi-address=$(ADDRESS)
             - --kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)
@@ -131,15 +131,13 @@ spec:
             - "--nodeid=$(KUBE_NODE_NAME)"
             - "--user-agent-suffix=OSS-kubectl"
             - "--metrics-address=0.0.0.0:29635"
-          ports:
-            - containerPort: 29633
-              name: healthz
-              protocol: TCP
+            - "--enable-aznfs-mount=true"
           livenessProbe:
             failureThreshold: 5
             httpGet:
+              host: localhost
               path: /healthz
-              port: healthz
+              port: 29633
             initialDelaySeconds: 30
             timeoutSeconds: 10
             periodSeconds: 30
@@ -173,12 +171,36 @@ spec:
               name: azure-cred
             - mountPath: /mnt
               name: blob-cache
+            - mountPath: /opt/microsoft/aznfs/data
+              name: aznfs-data
+            - mountPath: /lib/modules
+              name: lib-modules
+              readOnly: true
           resources:
             limits:
               memory: 2100Mi
             requests:
               cpu: 10m
               memory: 20Mi
+        - name: aznfswatchdog
+          image: mcr.microsoft.com/k8s/csi/blob-csi:latest
+          command:
+            - "aznfswatchdog"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          resources:
+            limits:
+              memory: 100Mi
+            requests:
+              cpu: 10m
+              memory: 20Mi
+          volumeMounts:
+            - mountPath: /opt/microsoft/aznfs/data
+              name: aznfs-data
+            - mountPath: /var/lib/kubelet/
+              mountPropagation: Bidirectional
+              name: mountpoint-dir
       volumes:
         - name: host-usr
           hostPath:
@@ -209,4 +231,12 @@ spec:
             path: /mnt
             type: DirectoryOrCreate
           name: blob-cache
+        - hostPath:
+            path: /opt/microsoft/aznfs/data
+            type: DirectoryOrCreate
+          name: aznfs-data
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+            type: DirectoryOrCreate
 ---

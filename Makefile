@@ -17,7 +17,7 @@ GIT_COMMIT ?= $(shell git rev-parse HEAD)
 REGISTRY ?= andyzhangx
 REGISTRY_NAME ?= $(shell echo $(REGISTRY) | sed "s/.azurecr.io//g")
 IMAGE_NAME ?= blob-csi
-IMAGE_VERSION ?= v1.24.0
+IMAGE_VERSION ?= v1.25.0
 CLOUD ?= AzurePublicCloud
 # Use a custom version for E2E tests if we are in Prow
 ifdef CI
@@ -70,10 +70,6 @@ unit-test:
 .PHONY: sanity-test
 sanity-test: blob
 	go test -v -timeout=30m ./test/sanity
-
-.PHONY: integration-test
-integration-test: blob
-	go test -v -timeout=30m ./test/integration
 
 .PHONY: e2e-test
 e2e-test: install-ginkgo

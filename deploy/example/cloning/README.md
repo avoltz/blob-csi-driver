@@ -2,6 +2,10 @@
 ## Feature Status: Beta
 
 - supported from v1.23.2
+- NFSv3 protocol is not supported
+
+## Prerequisites
+- ensure that the virtual network on which the driver controller pod is running is included in the allowed list of the storage account VNet setting.
 
 ## Create a Source PVC
 
@@ -21,7 +25,7 @@ outfile
 ## Create a PVC from an existing PVC
 >  Make sure application is not writing data to source blob container
 ```console
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/blob-csi-driver/master/deploy/example/cloning/pvc-blob-cloning.yaml
+kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/blob-csi-driver/master/deploy/example/cloning/pvc-blob-csi-cloning.yaml
 ```
 ### Check the Creation Status
 

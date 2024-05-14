@@ -22,8 +22,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	resources "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azclient"
@@ -39,29 +37,17 @@ type Client struct {
 
 func GetClient(cloud, subscriptionID, clientID, tenantID, clientSecret string) (*Client, error) {
 	armConfig := &azclient.ARMClientConfig{
-		Cloud: cloud,
+		Cloud:    cloud,
+		TenantID: tenantID,
 	}
-	cloudConfig, err := azclient.GetAzureCloudConfig(armConfig)
-	if err != nil {
-		return nil, err
-	}
-	credProvider, err := azclient.NewAuthProvider(azclient.AzureAuthConfig{
-		TenantID:        tenantID,
+	credProvider, err := azclient.NewAuthProvider(armConfig, &azclient.AzureAuthConfig{
 		AADClientID:     clientID,
 		AADClientSecret: clientSecret,
-	}, &arm.ClientOptions{
-		AuxiliaryTenants: []string{tenantID},
-		ClientOptions: policy.ClientOptions{
-			Cloud: *cloudConfig,
-		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	cred, err := credProvider.GetAzIdentity()
-	if err != nil {
-		return nil, err
-	}
+	cred := credProvider.GetAzIdentity()
 	factory, err := azclient.NewClientFactory(&azclient.ClientFactoryConfig{
 		SubscriptionID: subscriptionID,
 	}, armConfig, cred)

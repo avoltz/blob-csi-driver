@@ -17,7 +17,6 @@ limitations under the License.
 package blob
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -26,10 +25,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2022-07-01/network"
 	"github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/Azure/go-autorest/autorest"
+	azure2 "github.com/Azure/go-autorest/autorest/azure"
 	"golang.org/x/net/context"
-	clientset "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/configloader"
@@ -45,35 +43,19 @@ var (
 
 // IsAzureStackCloud decides whether the driver is running on Azure Stack Cloud.
 func IsAzureStackCloud(cloud *azure.Cloud) bool {
-	return !cloud.Config.DisableAzureStackCloud && strings.EqualFold(cloud.Config.Cloud, "AZURESTACKCLOUD")
+	return !cloud.DisableAzureStackCloud && strings.EqualFold(cloud.Cloud, "AZURESTACKCLOUD")
 }
 
 // getCloudProvider get Azure Cloud Provider
-func GetCloudProvider(ctx context.Context, kubeconfig, nodeID, secretName, secretNamespace, userAgent string, allowEmptyCloudConfig bool, kubeAPIQPS float64, kubeAPIBurst int) (*azure.Cloud, error) {
+func GetCloudProvider(ctx context.Context, kubeClient kubernetes.Interface, nodeID, secretName, secretNamespace, userAgent string, allowEmptyCloudConfig bool) (*azure.Cloud, error) {
 	var (
 		config     *azure.Config
-		kubeClient *clientset.Clientset
 		fromSecret bool
+		err        error
 	)
 
 	az := &azure.Cloud{}
 	az.Environment.StorageEndpointSuffix = storage.DefaultBaseURL
-
-	kubeCfg, err := getKubeConfig(kubeconfig)
-	if err == nil && kubeCfg != nil {
-		// set QPS and QPS Burst as higher values
-		klog.V(2).Infof("set QPS(%f) and QPS Burst(%d) for driver kubeClient", float32(kubeAPIQPS), kubeAPIBurst)
-		kubeCfg.QPS = float32(kubeAPIQPS)
-		kubeCfg.Burst = kubeAPIBurst
-		if kubeClient, err = clientset.NewForConfig(kubeCfg); err != nil {
-			klog.Warningf("NewForConfig failed with error: %v", err)
-		}
-	} else {
-		klog.Warningf("get kubeconfig(%s) failed with error: %v", kubeconfig, err)
-		if !os.IsNotExist(err) && !errors.Is(err, rest.ErrNotInCluster) {
-			return az, fmt.Errorf("failed to get KubeClient: %w", err)
-		}
-	}
 
 	if kubeClient != nil {
 		az.KubeClient = kubeClient
@@ -132,7 +114,18 @@ func GetCloudProvider(ctx context.Context, kubeconfig, nodeID, secretName, secre
 
 		config.UserAgent = userAgent
 		config.CloudProviderBackoff = true
-		if err = az.InitializeCloudFromConfig(context.TODO(), config, fromSecret, false); err != nil {
+		// these environment variables are injected by workload identity webhook
+		if tenantID := os.Getenv("AZURE_TENANT_ID"); tenantID != "" {
+			config.TenantID = tenantID
+		}
+		if clientID := os.Getenv("AZURE_CLIENT_ID"); clientID != "" {
+			config.AADClientID = clientID
+		}
+		if federatedTokenFile := os.Getenv("AZURE_FEDERATED_TOKEN_FILE"); federatedTokenFile != "" {
+			config.AADFederatedTokenFile = federatedTokenFile
+			config.UseFederatedWorkloadIdentityExtension = true
+		}
+		if err = az.InitializeCloudFromConfig(ctx, config, fromSecret, false); err != nil {
 			klog.Warningf("InitializeCloudFromConfig failed with error: %v", err)
 		}
 	}
@@ -189,9 +182,9 @@ func (d *Driver) initializeKvClient() (*kv.BaseClient, error) {
 
 // getKeyvaultToken retrieves a new service principal token to access keyvault
 func (d *Driver) getKeyvaultToken() (authorizer autorest.Authorizer, err error) {
-	env := d.cloud.Environment
+	env := d.getCloudEnvironment()
 	kvEndPoint := strings.TrimSuffix(env.KeyVaultEndpoint, "/")
-	servicePrincipalToken, err := providerconfig.GetServicePrincipalToken(&d.cloud.Config.AzureAuthConfig, &env, kvEndPoint)
+	servicePrincipalToken, err := providerconfig.GetServicePrincipalToken(&d.cloud.AzureAuthConfig, &env, kvEndPoint)
 	if err != nil {
 		return nil, err
 	}
@@ -267,15 +260,16 @@ func (d *Driver) updateSubnetServiceEndpoints(ctx context.Context, vnetResourceG
 	return nil
 }
 
-func getKubeConfig(kubeconfig string) (config *rest.Config, err error) {
-	if kubeconfig != "" {
-		if config, err = clientcmd.BuildConfigFromFlags("", kubeconfig); err != nil {
-			return nil, err
-		}
-	} else {
-		if config, err = rest.InClusterConfig(); err != nil {
-			return nil, err
-		}
+func (d *Driver) getStorageEndPointSuffix() string {
+	if d.cloud == nil || d.cloud.Environment.StorageEndpointSuffix == "" {
+		return defaultStorageEndPointSuffix
 	}
-	return config, err
+	return d.cloud.Environment.StorageEndpointSuffix
+}
+
+func (d *Driver) getCloudEnvironment() azure2.Environment {
+	if d.cloud == nil {
+		return azure2.PublicCloud
+	}
+	return d.cloud.Environment
 }

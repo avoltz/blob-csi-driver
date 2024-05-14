@@ -65,6 +65,8 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Dynamic Provisioning", func() {
 							"-o allow_other",
 							"--file-cache-timeout-in-seconds=120",
 							"--cancel-list-on-mount-seconds=0",
+							"-o uid=0",
+							"-o gid=0",
 						},
 						VolumeMount: testsuites.VolumeMountDetails{
 							NameGenerate:      "test-volume-",
@@ -101,6 +103,8 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Dynamic Provisioning", func() {
 							"-o allow_other",
 							"--file-cache-timeout-in-seconds=120",
 							"--cancel-list-on-mount-seconds=0",
+							"-o uid=0",
+							"-o gid=0",
 						},
 						VolumeMount: testsuites.VolumeMountDetails{
 							NameGenerate:      "test-volume-",
@@ -516,9 +520,41 @@ var _ = ginkgo.Describe("[blob-csi-e2e] Dynamic Provisioning", func() {
 			CSIDriver: testDriver,
 			Pods:      pods,
 			StorageClassParameters: map[string]string{
-				"skuName":          "Premium_LRS",
-				"protocol":         "nfs",
-				"mountPermissions": "0755",
+				"skuName":             "Premium_LRS",
+				"protocol":            "nfs",
+				"mountPermissions":    "0755",
+				"fsGroupChangePolicy": "Always",
+			},
+		}
+		test.Run(ctx, cs, ns)
+	})
+
+	ginkgo.It("enforce with nfs mount [nfs]", func(ctx ginkgo.SpecContext) {
+		if isAzureStackCloud {
+			ginkgo.Skip("test case is not available for Azure Stack")
+		}
+		pods := []testsuites.PodDetails{
+			{
+				Cmd: "echo 'hello world' > /mnt/test-1/data && grep 'hello world' /mnt/test-1/data",
+				Volumes: []testsuites.VolumeDetails{
+					{
+						ClaimSize: "10Gi",
+						MountOptions: []string{
+							"nconnect=8",
+						},
+						VolumeMount: testsuites.VolumeMountDetails{
+							NameGenerate:      "test-volume-",
+							MountPathGenerate: "/mnt/test-",
+						},
+					},
+				},
+			},
+		}
+		test := testsuites.DynamicallyProvisionedCmdVolumeTest{
+			CSIDriver: testDriver,
+			Pods:      pods,
+			StorageClassParameters: map[string]string{
+				"protocol": "nfsv3",
 			},
 		}
 		test.Run(ctx, cs, ns)

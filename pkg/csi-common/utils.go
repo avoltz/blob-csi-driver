@@ -17,9 +17,12 @@ limitations under the License.
 package csicommon
 
 import (
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -29,7 +32,7 @@ import (
 	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	typedv1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
@@ -88,6 +91,31 @@ func ParseEndpoint(ep string) (string, string, error) {
 	return "", "", fmt.Errorf("Invalid endpoint: %v", ep)
 }
 
+func Listen(ctx context.Context, endpoint string) (net.Listener, error) {
+	proto, addr, err := ParseEndpoint(endpoint)
+	if err != nil {
+		klog.Errorf(err.Error())
+		return nil, err
+	}
+
+	if proto == "unix" {
+		if runtime.GOOS != "windows" {
+			addr = "/" + addr
+		}
+		if err := os.Remove(addr); err != nil && !os.IsNotExist(err) {
+			klog.Errorf("Failed to remove %s, error: %s", addr, err.Error())
+			return nil, err
+		}
+	}
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(ctx, proto, addr)
+	if err != nil {
+		klog.Errorf("Failed to listen: %v", err)
+		return nil, err
+	}
+	return listener, nil
+}
+
 func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *csi.VolumeCapability_AccessMode {
 	return &csi.VolumeCapability_AccessMode{Mode: mode}
 }
@@ -121,10 +149,10 @@ func getLogLevel(method string) int32 {
 	return 2
 }
 
-func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+func LogGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	level := klog.Level(getLogLevel(info.FullMethod))
 	klog.V(level).Infof("GRPC call: %s", info.FullMethod)
-	klog.V(level).Infof("GRPC request: %s", protosanitizer.StripSecrets(req))
+	klog.V(level).Infof("GRPC request: %s", StripSensitiveValue(protosanitizer.StripSecrets(req), "csi.storage.k8s.io/serviceAccount.tokens"))
 
 	resp, err := handler(ctx, req)
 	if err != nil {
@@ -193,7 +221,7 @@ func SendKubeEvent(eventType string, reasonCode string, eventSource string, mess
 		return
 	}
 
-	scheme := runtime.NewScheme()
+	scheme := k8sruntime.NewScheme()
 	if err := v1.AddToScheme(scheme); err != nil {
 		klog.Errorf(err.Error())
 		return
@@ -216,4 +244,49 @@ func SendKubeEvent(eventType string, reasonCode string, eventSource string, mess
 
 	eventRecorder := eventBroadcaster.NewRecorder(scheme, v1.EventSource{Component: eventSource})
 	eventRecorder.Event(pod, eventType, reasonCode, messageStr)
+}
+
+type stripSensitiveValue struct {
+	// volume_context[key] is the value to be stripped.
+	key string
+	// req is the csi grpc request stripped by `protosanitizer.StripSecrets`
+	req fmt.Stringer
+}
+
+func StripSensitiveValue(req fmt.Stringer, key string) fmt.Stringer {
+	return &stripSensitiveValue{
+		key: key,
+		req: req,
+	}
+}
+
+func (s *stripSensitiveValue) String() string {
+	return stripSensitiveValueByKey(s.req, s.key)
+}
+
+func stripSensitiveValueByKey(req fmt.Stringer, key string) string {
+	var parsed map[string]interface{}
+
+	err := json.Unmarshal([]byte(req.String()), &parsed)
+	if err != nil || parsed == nil {
+		return req.String()
+	}
+
+	volumeContext, ok := parsed["volume_context"].(map[string]interface{})
+	if !ok {
+		return req.String()
+	}
+
+	if _, ok := volumeContext[key]; !ok {
+		return req.String()
+	}
+
+	volumeContext[key] = "***stripped***"
+
+	b, err := json.Marshal(parsed)
+	if err != nil {
+		return req.String()
+	}
+
+	return string(b)
 }

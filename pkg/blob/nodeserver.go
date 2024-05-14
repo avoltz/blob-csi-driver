@@ -32,7 +32,6 @@ import (
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	"sigs.k8s.io/cloud-provider-azure/pkg/metrics"
 
-	"github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
 	v1 "k8s.io/api/core/v1"
@@ -85,6 +84,19 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	mountPermissions := d.mountPermissions
 	context := req.GetVolumeContext()
 	if context != nil {
+		// token request
+		if context[serviceAccountTokenField] != "" && getValueInMap(context, clientIDField) != "" {
+			klog.V(2).Infof("NodePublishVolume: volume(%s) mount on %s with service account token, clientID: %s", volumeID, target, getValueInMap(context, clientIDField))
+			_, err := d.NodeStageVolume(ctx, &csi.NodeStageVolumeRequest{
+				StagingTargetPath: target,
+				VolumeContext:     context,
+				VolumeCapability:  volCap,
+				VolumeId:          volumeID,
+			})
+			return &csi.NodePublishVolumeResponse{}, err
+		}
+
+		// ephemeral volume
 		if strings.EqualFold(context[ephemeralField], trueValue) {
 			setKeyValueInMap(context, secretNamespaceField, context[podNamespaceField])
 			if !d.allowInlineVolumeKeyAccessWithIdentity {
@@ -102,7 +114,7 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 			return &csi.NodePublishVolumeResponse{}, err
 		}
 
-		if perm := context[mountPermissionsField]; perm != "" {
+		if perm := getValueInMap(context, mountPermissionsField); perm != "" {
 			var err error
 			if mountPermissions, err = strconv.ParseUint(perm, 8, 32); err != nil {
 				return nil, status.Errorf(codes.InvalidArgument, fmt.Sprintf("invalid mountPermissions %s", perm))
@@ -258,14 +270,21 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		return nil, status.Error(codes.InvalidArgument, "Volume capability not provided")
 	}
 
-	if acquired := d.volumeLocks.TryAcquire(volumeID); !acquired {
+	lockKey := fmt.Sprintf("%s-%s", volumeID, targetPath)
+	if acquired := d.volumeLocks.TryAcquire(lockKey); !acquired {
 		return nil, status.Errorf(codes.Aborted, volumeOperationAlreadyExistsFmt, volumeID)
 	}
-	defer d.volumeLocks.Release(volumeID)
+	defer d.volumeLocks.Release(lockKey)
 
 	mountFlags := req.GetVolumeCapability().GetMount().GetMountFlags()
+	volumeMountGroup := req.GetVolumeCapability().GetMount().GetVolumeMountGroup()
 	attrib := req.GetVolumeContext()
 	secrets := req.GetSecrets()
+
+	if getValueInMap(attrib, clientIDField) != "" && attrib[serviceAccountTokenField] == "" {
+		klog.V(2).Infof("Skip NodeStageVolume for volume(%s) since clientID %s is provided but service account token is empty", volumeID, getValueInMap(attrib, clientIDField))
+		return &csi.NodeStageVolumeResponse{}, nil
+	}
 
 	mc := metrics.NewMetricContext(blobCSIDriverName, "node_stage_volume", d.cloud.ResourceGroup, "", d.Name)
 	isOperationSucceeded := false
@@ -277,6 +296,8 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	var ephemeralVol, isHnsEnabled bool
 
 	containerNameReplaceMap := map[string]string{}
+
+	fsGroupChangePolicy := d.fsGroupChangePolicy
 
 	mountPermissions := d.mountPermissions
 	performChmodOp := (mountPermissions > 0)
@@ -313,12 +334,18 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 					mountPermissions = perm
 				}
 			}
+		case fsGroupChangePolicyField:
+			fsGroupChangePolicy = v
 		}
 	}
 
 	if protocol == EcProtocol {
 		targetPath = edgecache.GetStagingPath(targetPath)
 		klog.V(2).Infof("NodeStageVolume: edgecache enabled for volume, will mount to: %q", targetPath)
+	}
+
+	if !isSupportedFSGroupChangePolicy(fsGroupChangePolicy) {
+		return nil, status.Errorf(codes.InvalidArgument, "fsGroupChangePolicy(%s) is not supported, supported fsGroupChangePolicy list: %v", fsGroupChangePolicy, supportedFSGroupChangePolicyList)
 	}
 
 	mnt, err := d.ensureMountPoint(targetPath, fs.FileMode(mountPermissions))
@@ -339,11 +366,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	containerName = replaceWithMap(containerName, containerNameReplaceMap)
 
 	if strings.TrimSpace(storageEndpointSuffix) == "" {
-		if d.cloud.Environment.StorageEndpointSuffix != "" {
-			storageEndpointSuffix = d.cloud.Environment.StorageEndpointSuffix
-		} else {
-			storageEndpointSuffix = storage.DefaultBaseURL
-		}
+		storageEndpointSuffix = d.getStorageEndPointSuffix()
 	}
 
 	if strings.TrimSpace(serverAddress) == "" {
@@ -402,15 +425,15 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			targetPath, protocol, volumeID, attrib, mountFlags, serverAddress)
 
 		mountType := AZNFS
-		if !d.enableAznfsMount {
+		if !d.enableAznfsMount || protocol == NFSv3 {
 			mountType = NFS
 		}
 
 		source := fmt.Sprintf("%s:/%s/%s", serverAddress, accountName, containerName)
 		mountOptions := util.JoinMountOptions(mountFlags, []string{"sec=sys,vers=3,nolock"})
-		if err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
-			return true, d.mounter.MountSensitive(source, targetPath, mountType, mountOptions, []string{})
-		}); err != nil {
+		execFunc := func() error { return d.mounter.MountSensitive(source, targetPath, mountType, mountOptions, []string{}) }
+		timeoutFunc := func() error { return fmt.Errorf("time out") }
+		if err := volumehelper.WaitUntilTimeout(2*time.Minute, execFunc, timeoutFunc); err != nil {
 			var helpLinkMsg string
 			if d.appendMountErrorHelpLink {
 				helpLinkMsg = "\nPlease refer to http://aka.ms/blobmounterror for possible causes and solutions for mount errors."
@@ -426,6 +449,13 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 			klog.V(2).Infof("skip chmod on targetPath(%s) since mountPermissions is set as 0", targetPath)
 		}
 
+		if volumeMountGroup != "" && fsGroupChangePolicy != FSGroupChangeNone {
+			klog.V(2).Infof("set gid of volume(%s) as %s using fsGroupChangePolicy(%s)", volumeID, volumeMountGroup, fsGroupChangePolicy)
+			if err := volumehelper.SetVolumeOwnership(targetPath, volumeMountGroup, fsGroupChangePolicy); err != nil {
+				return nil, status.Error(codes.Internal, fmt.Sprintf("SetVolumeOwnership with volume(%s) on %s failed with %v", volumeID, targetPath, err))
+			}
+		}
+
 		isOperationSucceeded = true
 		klog.V(2).Infof("volume(%s) mount %s on %s succeeded", volumeID, source, targetPath)
 		return &csi.NodeStageVolumeResponse{}, nil
@@ -439,6 +469,12 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	if isHnsEnabled {
 		mountOptions = util.JoinMountOptions(mountOptions, []string{"--use-adls=true"})
 	}
+
+	if !checkGidPresentInMountFlags(mountFlags) && volumeMountGroup != "" {
+		klog.V(2).Infof("append volumeMountGroup %s", volumeMountGroup)
+		mountOptions = append(mountOptions, fmt.Sprintf("-o gid=%s", volumeMountGroup))
+	}
+
 	tmpPath := fmt.Sprintf("%s/%s", "/mnt", volumeID)
 	if d.appendTimeStampInCacheDir {
 		tmpPath += fmt.Sprintf("#%d", time.Now().Unix())
@@ -450,8 +486,8 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 		args = args + " " + opt
 	}
 
-	klog.V(2).Infof("target %v\nprotocol %v\n\nvolumeId %v\ncontext %v\nmountflags %v\nmountOptions %v\nargs %v\nserverAddress %v",
-		targetPath, protocol, volumeID, attrib, mountFlags, mountOptions, args, serverAddress)
+	klog.V(2).Infof("target %v\nprotocol %v\n\nvolumeId %v\ncontext %v\nmountflags %v mountOptions %v volumeMountGroup %s\nargs %v\nserverAddress %v",
+		targetPath, protocol, volumeID, attrib, mountFlags, mountOptions, volumeMountGroup, args, serverAddress)
 
 	authEnv = append(authEnv, "AZURE_STORAGE_ACCOUNT="+accountName, "AZURE_STORAGE_BLOB_ENDPOINT="+serverAddress)
 	if d.enableBlobMockMount {
@@ -524,10 +560,11 @@ func (d *Driver) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageVolume
 		return nil, status.Error(codes.InvalidArgument, "Staging target not provided")
 	}
 
-	if acquired := d.volumeLocks.TryAcquire(volumeID); !acquired {
+	lockKey := fmt.Sprintf("%s-%s", volumeID, stagingTargetPath)
+	if acquired := d.volumeLocks.TryAcquire(lockKey); !acquired {
 		return nil, status.Errorf(codes.Aborted, volumeOperationAlreadyExistsFmt, volumeID)
 	}
-	defer d.volumeLocks.Release(volumeID)
+	defer d.volumeLocks.Release(lockKey)
 
 	mc := metrics.NewMetricContext(blobCSIDriverName, "node_unstage_volume", d.cloud.ResourceGroup, "", d.Name)
 	isOperationSucceeded := false
@@ -608,6 +645,7 @@ func (d *Driver) NodeGetVolumeStats(_ context.Context, req *csi.NodeGetVolumeSta
 	}
 
 	mc := metrics.NewMetricContext(blobCSIDriverName, "node_get_volume_stats", d.cloud.ResourceGroup, "", d.Name)
+	mc.LogLevel = 6 // change log level
 	isOperationSucceeded := false
 	defer func() {
 		mc.ObserveOperationWithResult(isOperationSucceeded, VolumeID, req.VolumeId)
@@ -751,4 +789,13 @@ func waitForMount(path string, intervel, timeout time.Duration) error {
 			return fmt.Errorf("timeout waiting for mount %s", path)
 		}
 	}
+}
+
+func checkGidPresentInMountFlags(mountFlags []string) bool {
+	for _, mountFlag := range mountFlags {
+		if strings.Contains(mountFlag, "gid=") {
+			return true
+		}
+	}
+	return false
 }

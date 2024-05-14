@@ -19,22 +19,23 @@ package blob
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2021-09-01/storage"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
-
+	"go.uber.org/mock/gomock"
+	"golang.org/x/sync/errgroup"
 	v1api "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
-
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/storageaccountclient/mockstorageaccountclient"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
@@ -49,15 +50,16 @@ const (
 
 func NewFakeDriver() *Driver {
 	driverOptions := DriverOptions{
-		NodeID:                   fakeNodeID,
-		DriverName:               DefaultDriverName,
-		BlobfuseProxyEndpoint:    "",
-		EnableBlobfuseProxy:      false,
-		EnableEdgeCacheFinalizer: false,
-		BlobfuseProxyConnTimout:  5,
-		EnableBlobMockMount:      false,
+		NodeID:                      fakeNodeID,
+		DriverName:                  DefaultDriverName,
+		BlobfuseProxyEndpoint:       "",
+		EnableBlobfuseProxy:         false,
+		BlobfuseProxyConnTimout:     5,
+		WaitForAzCopyTimeoutMinutes: 1,
+		EnableBlobMockMount:         false,
+		EnableEdgeCacheFinalizer:    false,
 	}
-	driver := NewDriver(&driverOptions, &azure.Cloud{})
+	driver := NewDriver(&driverOptions, nil, &azure.Cloud{})
 	driver.Name = fakeDriverName
 	driver.Version = vendorVersion
 	driver.subnetLockMap = util.NewLockMap()
@@ -73,25 +75,27 @@ func TestNewFakeDriver(t *testing.T) {
 		BlobfuseProxyConnTimout: 5,
 		EnableBlobMockMount:     false,
 	}
-	d := NewDriver(&driverOptions, &azure.Cloud{})
+	d := NewDriver(&driverOptions, nil, &azure.Cloud{})
 	assert.NotNil(t, d)
 }
 
 func TestNewDriver(t *testing.T) {
 	driverOptions := DriverOptions{
-		NodeID:                  fakeNodeID,
-		DriverName:              DefaultDriverName,
-		BlobfuseProxyEndpoint:   "",
-		EnableBlobfuseProxy:     false,
-		BlobfuseProxyConnTimout: 5,
-		EnableBlobMockMount:     false,
+		NodeID:                      fakeNodeID,
+		DriverName:                  DefaultDriverName,
+		BlobfuseProxyEndpoint:       "",
+		EnableBlobfuseProxy:         false,
+		BlobfuseProxyConnTimout:     5,
+		WaitForAzCopyTimeoutMinutes: 1,
+		EnableBlobMockMount:         false,
 	}
-	driver := NewDriver(&driverOptions, &azure.Cloud{})
+	driver := NewDriver(&driverOptions, nil, &azure.Cloud{})
 	fakedriver := NewFakeDriver()
 	fakedriver.Name = DefaultDriverName
 	fakedriver.Version = driverVersion
 	fakedriver.accountSearchCache = driver.accountSearchCache
 	fakedriver.dataPlaneAPIVolCache = driver.dataPlaneAPIVolCache
+	fakedriver.azcopySasTokenCache = driver.azcopySasTokenCache
 	fakedriver.volStatsCache = driver.volStatsCache
 	fakedriver.cloud = driver.cloud
 	assert.Equal(t, driver, fakedriver)
@@ -134,7 +138,15 @@ func TestRun(t *testing.T) {
 				os.Setenv(DefaultAzureCredentialFileEnv, fakeCredFile)
 
 				d := NewFakeDriver()
-				d.Run("tcp://127.0.0.1:0", true)
+
+				ctx, cancelFn := context.WithCancel(context.Background())
+				var routines errgroup.Group
+				routines.Go(func() error { return d.Run(ctx, "tcp://127.0.0.1:0") })
+				time.Sleep(time.Millisecond * 500)
+				cancelFn()
+				time.Sleep(time.Millisecond * 500)
+				err := routines.Wait()
+				assert.Nil(t, err)
 			},
 		},
 		{
@@ -161,7 +173,14 @@ func TestRun(t *testing.T) {
 				d := NewFakeDriver()
 				d.cloud = &azure.Cloud{}
 				d.NodeID = ""
-				d.Run("tcp://127.0.0.1:0", true)
+				ctx, cancelFn := context.WithCancel(context.Background())
+				var routines errgroup.Group
+				routines.Go(func() error { return d.Run(ctx, "tcp://127.0.0.1:0") })
+				time.Sleep(time.Millisecond * 500)
+				cancelFn()
+				time.Sleep(time.Millisecond * 500)
+				err := routines.Wait()
+				assert.Nil(t, err)
 			},
 		},
 	}
@@ -941,7 +960,7 @@ func TestGetContainerReference(t *testing.T) {
 
 	d := NewFakeDriver()
 	d.cloud = azure.GetTestCloud(gomock.NewController(t))
-	d.cloud.KubeClient = fake.NewSimpleClientset()
+	d.KubeClient = fake.NewSimpleClientset()
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1060,8 +1079,7 @@ func TestGetStorageAccesskey(t *testing.T) {
 		},
 	}
 	d := NewFakeDriver()
-	d.cloud = &azure.Cloud{}
-	d.cloud.KubeClient = fake.NewSimpleClientset()
+	d.KubeClient = fake.NewSimpleClientset()
 	secret := &v1api.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: secretNamespace,
@@ -1074,7 +1092,7 @@ func TestGetStorageAccesskey(t *testing.T) {
 		Type: "Opaque",
 	}
 	secret.Namespace = secretNamespace
-	_, secretCreateErr := d.cloud.KubeClient.CoreV1().Secrets(secretNamespace).Create(context.TODO(), secret, metav1.CreateOptions{})
+	_, secretCreateErr := d.KubeClient.CoreV1().Secrets(secretNamespace).Create(context.TODO(), secret, metav1.CreateOptions{})
 	if secretCreateErr != nil {
 		t.Error("failed to create secret")
 	}
@@ -1104,7 +1122,7 @@ func TestGetInfoFromSecret(t *testing.T) {
 			testFunc: func(t *testing.T) {
 				d := NewFakeDriver()
 				d.cloud = &azure.Cloud{}
-				d.cloud.KubeClient = nil
+				d.KubeClient = nil
 				secretName := "foo"
 				secretNamespace := "bar"
 				_, _, _, _, _, _, _, err := d.GetInfoFromSecret(context.TODO(), secretName, secretNamespace)
@@ -1118,8 +1136,7 @@ func TestGetInfoFromSecret(t *testing.T) {
 			name: "Could not get secret",
 			testFunc: func(t *testing.T) {
 				d := NewFakeDriver()
-				d.cloud = &azure.Cloud{}
-				d.cloud.KubeClient = fakeClient
+				d.KubeClient = fakeClient
 				secretName := ""
 				secretNamespace := ""
 				_, _, _, _, _, _, _, err := d.GetInfoFromSecret(context.TODO(), secretName, secretNamespace)
@@ -1134,8 +1151,7 @@ func TestGetInfoFromSecret(t *testing.T) {
 			name: "get account name from secret",
 			testFunc: func(t *testing.T) {
 				d := NewFakeDriver()
-				d.cloud = &azure.Cloud{}
-				d.cloud.KubeClient = fakeClient
+				d.KubeClient = fakeClient
 				secretName := "store_account_name_key"
 				secretNamespace := "namespace"
 				accountName := "bar"
@@ -1151,7 +1167,7 @@ func TestGetInfoFromSecret(t *testing.T) {
 					},
 					Type: "Opaque",
 				}
-				_, secretCreateErr := d.cloud.KubeClient.CoreV1().Secrets(secretNamespace).Create(context.TODO(), secret, metav1.CreateOptions{})
+				_, secretCreateErr := d.KubeClient.CoreV1().Secrets(secretNamespace).Create(context.TODO(), secret, metav1.CreateOptions{})
 				if secretCreateErr != nil {
 					t.Error("failed to create secret")
 				}
@@ -1171,7 +1187,7 @@ func TestGetInfoFromSecret(t *testing.T) {
 			testFunc: func(t *testing.T) {
 				d := NewFakeDriver()
 				d.cloud = &azure.Cloud{}
-				d.cloud.KubeClient = fakeClient
+				d.KubeClient = fakeClient
 				secretName := "store_other_info"
 				secretNamespace := "namespace"
 				accountName := "bar"
@@ -1195,7 +1211,7 @@ func TestGetInfoFromSecret(t *testing.T) {
 					},
 					Type: "Opaque",
 				}
-				_, secretCreateErr := d.cloud.KubeClient.CoreV1().Secrets(secretNamespace).Create(context.TODO(), secret, metav1.CreateOptions{})
+				_, secretCreateErr := d.KubeClient.CoreV1().Secrets(secretNamespace).Create(context.TODO(), secret, metav1.CreateOptions{})
 				if secretCreateErr != nil {
 					t.Error("failed to create secret")
 				}
@@ -1232,7 +1248,7 @@ func TestGetSubnetResourceID(t *testing.T) {
 				d.cloud.VnetResourceGroup = "foo"
 				actualOutput := d.getSubnetResourceID("", "", "")
 				expectedOutput := fmt.Sprintf(subnetTemplate, d.cloud.SubscriptionID, "foo", d.cloud.VnetName, d.cloud.SubnetName)
-				assert.Equal(t, actualOutput, expectedOutput, "cloud.SubscriptionID should be used as the SubID")
+				assert.Equal(t, actualOutput, expectedOutput, "config.SubscriptionID should be used as the SubID")
 			},
 		},
 		{
@@ -1260,7 +1276,7 @@ func TestGetSubnetResourceID(t *testing.T) {
 				d.cloud.VnetResourceGroup = ""
 				actualOutput := d.getSubnetResourceID("", "", "")
 				expectedOutput := fmt.Sprintf(subnetTemplate, "bar", d.cloud.ResourceGroup, d.cloud.VnetName, d.cloud.SubnetName)
-				assert.Equal(t, actualOutput, expectedOutput, "cloud.Resourcegroup should be used as the rg")
+				assert.Equal(t, actualOutput, expectedOutput, "config.ResourceGroup should be used as the rg")
 			},
 		},
 		{
@@ -1274,7 +1290,7 @@ func TestGetSubnetResourceID(t *testing.T) {
 				d.cloud.VnetResourceGroup = "fakeVnetResourceGroup"
 				actualOutput := d.getSubnetResourceID("", "", "")
 				expectedOutput := fmt.Sprintf(subnetTemplate, "bar", d.cloud.VnetResourceGroup, d.cloud.VnetName, d.cloud.SubnetName)
-				assert.Equal(t, actualOutput, expectedOutput, "cloud.VnetResourceGroup should be used as the rg")
+				assert.Equal(t, actualOutput, expectedOutput, "config.VnetResourceGroup should be used as the rg")
 			},
 		},
 		{
@@ -1563,6 +1579,52 @@ func TestSetKeyValueInMap(t *testing.T) {
 	}
 }
 
+func TestGetValueInMap(t *testing.T) {
+	tests := []struct {
+		desc     string
+		m        map[string]string
+		key      string
+		expected string
+	}{
+		{
+			desc:     "nil map",
+			key:      "key",
+			expected: "",
+		},
+		{
+			desc:     "empty map",
+			m:        map[string]string{},
+			key:      "key",
+			expected: "",
+		},
+		{
+			desc:     "non-empty map",
+			m:        map[string]string{"k": "v"},
+			key:      "key",
+			expected: "",
+		},
+		{
+			desc:     "same key already exists",
+			m:        map[string]string{"subDir": "value2"},
+			key:      "subDir",
+			expected: "value2",
+		},
+		{
+			desc:     "case insensitive key already exists",
+			m:        map[string]string{"subDir": "value2"},
+			key:      "subdir",
+			expected: "value2",
+		},
+	}
+
+	for _, test := range tests {
+		result := getValueInMap(test.m, test.key)
+		if result != test.expected {
+			t.Errorf("test[%s]: unexpected output: %v, expected result: %v", test.desc, result, test.expected)
+		}
+	}
+}
+
 func TestReplaceWithMap(t *testing.T) {
 	tests := []struct {
 		desc     string
@@ -1684,8 +1746,8 @@ func TestIsNFSProtocol(t *testing.T) {
 			expectedResult: true,
 		},
 		{
-			protocol:       "NFSv3",
-			expectedResult: false,
+			protocol:       "nfsv3",
+			expectedResult: true,
 		},
 		{
 			protocol:       "aznfs",
@@ -1701,6 +1763,63 @@ func TestIsNFSProtocol(t *testing.T) {
 		result := isNFSProtocol(test.protocol)
 		if result != test.expectedResult {
 			t.Errorf("isNFSVolume(%s) returned with %v, not equal to %v", test.protocol, result, test.expectedResult)
+		}
+	}
+}
+
+func TestDriverOptions_AddFlags(t *testing.T) {
+	t.Run("test options", func(t *testing.T) {
+		option := DriverOptions{}
+		option.AddFlags()
+		typeInfo := reflect.TypeOf(option)
+		numOfExpectedOptions := typeInfo.NumField()
+		count := 0
+		flag.CommandLine.VisitAll(func(f *flag.Flag) {
+			if !strings.Contains(f.Name, "test") {
+				count++
+			}
+		})
+		if numOfExpectedOptions != count {
+			t.Errorf("expected %d flags, but found %d flag in DriverOptions", numOfExpectedOptions, count)
+		}
+	})
+}
+
+func TestIsSupportedFSGroupChangePolicy(t *testing.T) {
+	tests := []struct {
+		policy         string
+		expectedResult bool
+	}{
+		{
+			policy:         "",
+			expectedResult: true,
+		},
+		{
+			policy:         "None",
+			expectedResult: true,
+		},
+		{
+			policy:         "Always",
+			expectedResult: true,
+		},
+		{
+			policy:         "OnRootMismatch",
+			expectedResult: true,
+		},
+		{
+			policy:         "onRootMismatch",
+			expectedResult: false,
+		},
+		{
+			policy:         "invalid",
+			expectedResult: false,
+		},
+	}
+
+	for _, test := range tests {
+		result := isSupportedFSGroupChangePolicy(test.policy)
+		if result != test.expectedResult {
+			t.Errorf("isSupportedFSGroupChangePolicy(%s) returned with %v, not equal to %v", test.policy, result, test.expectedResult)
 		}
 	}
 }
