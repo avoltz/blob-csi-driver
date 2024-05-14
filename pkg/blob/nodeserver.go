@@ -29,13 +29,13 @@ import (
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
 	cv "sigs.k8s.io/blob-csi-driver/pkg/edgecache/cachevolume"
 	blobcsiutil "sigs.k8s.io/blob-csi-driver/pkg/util"
+	volumehelper "sigs.k8s.io/blob-csi-driver/pkg/util"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	"sigs.k8s.io/cloud-provider-azure/pkg/metrics"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util"
