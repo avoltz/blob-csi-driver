@@ -22,7 +22,7 @@ RUN mkdir /blobfuse-proxy/
 
 COPY ./pkg/blobfuse-proxy/init.sh /blobfuse-proxy/
 COPY ./pkg/blobfuse-proxy/blobfuse-proxy.service /blobfuse-proxy/
-COPY ./_output/\${ARCH}/blobfuse-proxy /blobfuse-proxy/
+COPY ./_output/${ARCH}/blobfuse-proxy /blobfuse-proxy/
 COPY ./pkg/blobfuse-proxy/install-proxy.sh /blobfuse-proxy/
 COPY ./pkg/blobfuse-proxy/install-proxy-rhcos.sh /blobfuse-proxy/
 
