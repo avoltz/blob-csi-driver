@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/stretchr/testify/assert"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/provider/config"
 )
 
@@ -152,7 +153,7 @@ func TestSendProvisionVolumeSuccess(t *testing.T) {
 	testcases := []SuccessTestCase{
 		{
 			name:     "ValidWIAuth",
-			config:   config.AzureAuthConfig{UseFederatedWorkloadIdentityExtension: true},
+			config:   config.AzureAuthConfig{AzureAuthConfig: azclient.AzureAuthConfig{UseFederatedWorkloadIdentityExtension: true}},
 			blobAuth: NewBlobAuth(suffix, acct, container, "", "", "WorkloadIdentity"),
 			expectedAnnotations: map[string]string{
 				volumeStateAnnotation:           "not created",

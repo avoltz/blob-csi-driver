@@ -1,14 +1,27 @@
 ## Driver Parameters
  > parameter names are case-insensitive
 
-<details><summary>required permissions for CSI driver</summary>
+<details><summary>required permissions for CSI driver controller</summary>
 <pre>
-    - Microsoft.Storage/storageAccounts/blobServices/read
-    - Microsoft.Storage/storageAccounts/blobServices/containers/write
-    - Microsoft.Storage/storageAccounts/listKeys/action
-    - Microsoft.Storage/storageAccounts/read
-    - Microsoft.Storage/storageAccounts/write
-    - Microsoft.Storage/storageAccounts/delete
+Microsoft.Storage/storageAccounts/write
+Microsoft.Storage/storageAccounts/read
+Microsoft.Storage/storageAccounts/listKeys/action
+Microsoft.Storage/storageAccounts/*/delete
+Microsoft.Storage/storageAccounts/blobServices/containers/write
+Microsoft.Storage/storageAccounts/blobServices/containers/read
+Microsoft.Storage/storageAccounts/blobServices/containers/delete
+Microsoft.Storage/operations/read
+Microsoft.Network/virtualNetworks/subnets/write
+Microsoft.Network/virtualNetworks/subnets/read
+Microsoft.Network/privateEndpoints/write
+Microsoft.Network/privateEndpoints/read
+Microsoft.Network/privateEndpoints/privateDnsZoneGroups/write
+Microsoft.Network/privateDnsZones/write
+Microsoft.Network/privateDnsZones/virtualNetworkLinks/write
+Microsoft.Network/privateDnsZones/virtualNetworkLinks/read
+Microsoft.Network/privateDnsZones/read
+Microsoft.Network/privateDnsOperationStatuses/read
+Microsoft.Network/locations/operations/read
 </pre>
 </details>
 
@@ -47,7 +60,7 @@ isHnsEnabled | enable `Hierarchical namespace` for Azure DataLake storage accoun
 mountPermissions | mounted folder permissions. The default is `0777`, if set as `0`, driver will not perform `chmod` after mount | `0777` | No |
 vnetResourceGroup | specify vnet resource group where virtual network is | existing resource group name | No | if empty, driver will use the `vnetResourceGroup` value in azure cloud config file
 vnetName | virtual network name | existing virtual network name | No | if empty, driver will use the `vnetName` value in azure cloud config file
-subnetName | subnet name | existing subnet name of the agent node | No | if empty, driver will use the `subnetName` value in azure cloud config file
+subnetName | subnet name | existing subnet name(s) of the agent node, if you want to update service endpoints on multiple subnets, separate them using a comma (`,`) | No | if empty, driver will use the `subnetName` value in azure cloud config file
 softDeleteBlobs | Enable [soft delete for blobs](https://learn.microsoft.com/en-us/azure/storage/blobs/soft-delete-blob-overview), specify the days to retain deleted blobs | "7" | No | Soft Delete Blobs is disabled if empty
 softDeleteContainers | Enable [soft delete for containers](https://learn.microsoft.com/en-us/azure/storage/blobs/soft-delete-container-overview), specify the days to retain deleted containers | "7" | No | Soft Delete Containers is disabled if empty
 enableBlobVersioning | Enable [blob versioning](https://learn.microsoft.com/en-us/azure/storage/blobs/versioning-overview), can't enabled when `protocol` is `nfs` or `isHnsEnabled` is `true` | `true`,`false` | No | versioning for blobs is disabled if empty
@@ -85,10 +98,13 @@ pvc-92a4d7f2-f23b-4904-bad4-2cbfcff6e388
 Name | Meaning | Available Value | Mandatory | Default value
 --- | --- | --- | --- | ---
 volumeHandle | Specify a value the driver can use to uniquely identify the storage blob container in the cluster. | A recommended way to produce a unique value is to combine the globally unique storage account name and container name: {account-name}_{container-name}. Note: the # character is reserved for internal use, the / character is not allowed. | Yes |
+volumeAttributes.subscriptionID | specify Azure subscription ID where blob storage directory is located | Azure subscription ID | No | if not empty, `resourceGroup` must be provided
 volumeAttributes.resourceGroup | Azure resource group name | existing resource group name | No | if empty, driver will use the same resource group name as current k8s cluster
 volumeAttributes.storageAccount | existing storage account name | existing storage account name | Yes |
 volumeAttributes.containerName | existing container name | existing container name | Yes |
 volumeAttributes.protocol | specify blobfuse, blobfuse2 or NFSv3 mount (blobfuse2 is still in Preview) | `fuse`, `fuse2`, `nfs` | No | `fuse`
+volumeAttributes.server | specify Azure storage account server address | existing server address, e.g. `accountname.privatelink.blob.core.windows.net` | No | if empty, driver will use default `accountname.blob.core.windows.net` or other sovereign cloud account address
+volumeAttributes.storageEndpointSuffix | specify Azure storage endpoint suffix | `core.windows.net`, `core.chinacloudapi.cn`, etc | No | if empty, driver will use default storage endpoint suffix according to cloud environment
 --- | **Following parameters are only for blobfuse** | --- | --- |
 volumeAttributes.secretName | secret name that stores storage account name and key(only applies for SMB) | | No |
 volumeAttributes.secretNamespace | secret namespace | `default`,`kube-system`, etc | No | pvc namespace
@@ -97,6 +113,7 @@ nodeStageSecretRef.name | secret name that stores(check below examples):<br>`azu
 nodeStageSecretRef.namespace | secret namespace | k8s namespace  |  Yes  |
 --- | **Following parameters are only for NFS protocol** | --- | --- |
 volumeAttributes.mountPermissions | mounted folder permissions | `0777` | No |
+fsGroupChangePolicy | indicates how volume's ownership will be changed by the driver, pod `securityContext.fsGroupChangePolicy` is ignored  | `OnRootMismatch`(by default), `Always`, `None` | No | `OnRootMismatch`
 --- | **Following parameters are only for feature: blobfuse [Managed Identity and Service Principal Name auth](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#environment-variables)** | --- | --- |
 volumeAttributes.AzureStorageAuthType | Authentication Type | `Key`, `SAS`, `MSI`, `SPN` | No | `Key`
 volumeAttributes.AzureStorageIdentityClientID | Identity Client ID |  | No |
@@ -125,7 +142,7 @@ kubectl create secret generic azure-secret --from-literal azurestoragespnclients
  - mounting blob storage NFSv3 does not need account key, NFS mount access is configured by following setting:
     - `Firewalls and virtual networks`: select `Enabled from selected virtual networks and IP addresses` with same vnet as agent node
  - blobfuse cache(`--tmp-path` [mount option](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#mount-options))
-   - blobfuse cache is on `/mnt` directory by default, `/mnt` is mounted on temp disk if VM sku provides temp disk, `/mnt` is mounted on os disk if VM sku does not provide temp disk
+   - By default, the blobfuse cache is located in the `/mnt` directory. If the VM SKU provides a temporary disk, the `/mnt` directory is mounted on the temporary disk. However, if the VM SKU does not provide a temporary disk, the `/mnt` directory is mounted on the OS disk. 
    - with blobfuse-proxy deployment (default on AKS), user could set `--tmp-path=` mount option to specify a different cache directory
  - [Mount an azure blob storage with a dedicated user-assigned managed identity](https://github.com/qxsch/Azure-Aks/tree/master/aks-blobfuse-mi)
  - [Blobfuse Performance and caching](https://github.com/Azure/azure-storage-fuse/tree/blobfuse-1.4.5#performance-and-caching)

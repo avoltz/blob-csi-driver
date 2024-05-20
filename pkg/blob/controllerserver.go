@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -28,6 +29,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/sas"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/service"
@@ -42,6 +45,7 @@ import (
 
 	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/blobcontainerclient"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	"sigs.k8s.io/cloud-provider-azure/pkg/metrics"
 	"sigs.k8s.io/cloud-provider-azure/pkg/provider"
@@ -51,8 +55,14 @@ import (
 const (
 	privateEndpoint = "privateendpoint"
 
-	waitForCopyInterval = 5 * time.Second
-	waitForCopyTimeout  = 3 * time.Minute
+	azcopyAutoLoginType             = "AZCOPY_AUTO_LOGIN_TYPE"
+	azcopySPAApplicationID          = "AZCOPY_SPA_APPLICATION_ID"
+	azcopySPAClientSecret           = "AZCOPY_SPA_CLIENT_SECRET"
+	azcopyTenantID                  = "AZCOPY_TENANT_ID"
+	azcopyMSIClientID               = "AZCOPY_MSI_CLIENT_ID"
+	MSI                             = "MSI"
+	SPN                             = "SPN"
+	authorizationPermissionMismatch = "AuthorizationPermissionMismatch"
 )
 
 // CreateVolume provisions a volume
@@ -74,8 +84,8 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	if acquired := d.volumeLocks.TryAcquire(volName); !acquired {
 		// logging the job status if it's volume cloning
 		if req.GetVolumeContentSource() != nil {
-			jobState, percent, err := d.azcopy.GetAzcopyJob(volName)
-			klog.V(2).Infof("azcopy job status: %s, copy percent: %s%%, error: %v", jobState, percent, err)
+			jobState, percent, err := d.azcopy.GetAzcopyJob(volName, []string{})
+			return nil, status.Errorf(codes.Aborted, volumeOperationAlreadyExistsWithAzcopyFmt, volName, jobState, percent, err)
 		}
 		return nil, status.Errorf(codes.Aborted, volumeOperationAlreadyExistsFmt, volName)
 	}
@@ -90,7 +100,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	}
 	var storageAccountType, subsID, resourceGroup, location, account, containerName, containerNamePrefix, protocol, customTags, secretName, secretNamespace, pvcNamespace string
 	var isHnsEnabled, requireInfraEncryption, enableBlobVersioning, createPrivateEndpoint, enableNfsV3 *bool
-	var vnetResourceGroup, vnetName, subnetName, accessTier, networkEndpointType, storageEndpointSuffix string
+	var vnetResourceGroup, vnetName, subnetName, accessTier, networkEndpointType, storageEndpointSuffix, fsGroupChangePolicy string
 	var matchTags, useDataPlaneAPI, getLatestAccountKey bool
 	var softDeleteBlobs, softDeleteContainers int32
 	var vnetResourceIDs []string
@@ -176,7 +186,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			containerNameReplaceMap[pvNameMetadata] = v
 		case serverNameField:
 		case storageAuthTypeField:
-		case storageIentityClientIDField:
+		case storageIdentityClientIDField:
 		case storageIdentityObjectIDField:
 		case storageIdentityResourceIDField:
 		case msiEndpointField:
@@ -205,6 +215,8 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			}
 		case useDataPlaneAPIField:
 			useDataPlaneAPI = strings.EqualFold(v, trueValue)
+		case fsGroupChangePolicyField:
+			fsGroupChangePolicy = v
 		default:
 			return nil, status.Errorf(codes.InvalidArgument, fmt.Sprintf("invalid parameter %q in storage class", k))
 		}
@@ -216,17 +228,12 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		}
 	}
 
-	if matchTags && account != "" {
-		return nil, status.Errorf(codes.InvalidArgument, fmt.Sprintf("matchTags must set as false when storageAccount(%s) is provided", account))
+	if !isSupportedFSGroupChangePolicy(fsGroupChangePolicy) {
+		return nil, status.Errorf(codes.InvalidArgument, "fsGroupChangePolicy(%s) is not supported, supported fsGroupChangePolicy list: %v", fsGroupChangePolicy, supportedFSGroupChangePolicyList)
 	}
 
-	if subsID != "" && subsID != d.cloud.SubscriptionID {
-		if isNFSProtocol(protocol) {
-			return nil, status.Errorf(codes.InvalidArgument, fmt.Sprintf("NFS protocol is not supported in cross subscription(%s)", subsID))
-		}
-		if !storeAccountKey {
-			return nil, status.Errorf(codes.InvalidArgument, fmt.Sprintf("storeAccountKey must set as true in cross subscription(%s)", subsID))
-		}
+	if matchTags && account != "" {
+		return nil, status.Errorf(codes.InvalidArgument, fmt.Sprintf("matchTags must set as false when storageAccount(%s) is provided", account))
 	}
 
 	if resourceGroup == "" {
@@ -248,7 +255,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		return nil, status.Errorf(codes.InvalidArgument, "protocol(%s) is not supported, supported protocol list: %v", protocol, supportedProtocolList)
 	}
 	if !isSupportedAccessTier(accessTier) {
-		return nil, status.Errorf(codes.InvalidArgument, "accessTier(%s) is not supported, supported AccessTier list: %v", accessTier, storage.PossibleAccessTierValues())
+		return nil, status.Errorf(codes.InvalidArgument, "accessTier(%s) is not supported, supported AccessTier list: %v", accessTier, armstorage.PossibleAccessTierValues())
 	}
 
 	if containerName != "" && containerNamePrefix != "" {
@@ -264,9 +271,12 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 
 	enableHTTPSTrafficOnly := true
 	if strings.EqualFold(networkEndpointType, privateEndpoint) {
+		if strings.Contains(subnetName, ",") {
+			return nil, status.Errorf(codes.InvalidArgument, "subnetName(%s) can only contain one subnet for private endpoint", subnetName)
+		}
 		createPrivateEndpoint = pointer.BoolPtr(true)
 	}
-	accountKind := string(storage.KindStorageV2)
+	accountKind := string(armstorage.KindStorageV2)
 	if isNFSProtocol(protocol) {
 		isHnsEnabled = pointer.Bool(true)
 		enableNfsV3 = pointer.Bool(true)
@@ -274,21 +284,25 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		storeAccountKey = false
 		if !pointer.BoolDeref(createPrivateEndpoint, false) {
 			// set VirtualNetworkResourceIDs for storage account firewall setting
-			vnetResourceID := d.getSubnetResourceID(vnetResourceGroup, vnetName, subnetName)
-			klog.V(2).Infof("set vnetResourceID(%s) for NFS protocol", vnetResourceID)
-			vnetResourceIDs = []string{vnetResourceID}
-			if err := d.updateSubnetServiceEndpoints(ctx, vnetResourceGroup, vnetName, subnetName); err != nil {
-				return nil, status.Errorf(codes.Internal, "update service endpoints failed with error: %v", err)
+			subnets := strings.Split(subnetName, ",")
+			for _, subnet := range subnets {
+				subnet = strings.TrimSpace(subnet)
+				vnetResourceID := d.getSubnetResourceID(vnetResourceGroup, vnetName, subnet)
+				klog.V(2).Infof("set vnetResourceID(%s) for NFS protocol", vnetResourceID)
+				vnetResourceIDs = []string{vnetResourceID}
+				if err := d.updateSubnetServiceEndpoints(ctx, vnetResourceGroup, vnetName, subnet); err != nil {
+					return nil, status.Errorf(codes.Internal, "update service endpoints failed with error: %v", err)
+				}
 			}
 		}
 	}
 
 	if strings.HasPrefix(strings.ToLower(storageAccountType), "premium") {
-		accountKind = string(storage.KindBlockBlobStorage)
+		accountKind = string(armstorage.KindBlockBlobStorage)
 	}
 	if IsAzureStackCloud(d.cloud) {
-		accountKind = string(storage.KindStorage)
-		if storageAccountType != "" && storageAccountType != string(storage.SkuNameStandardLRS) && storageAccountType != string(storage.SkuNamePremiumLRS) {
+		accountKind = string(armstorage.KindStorage)
+		if storageAccountType != "" && storageAccountType != string(armstorage.SKUNameStandardLRS) && storageAccountType != string(armstorage.SKUNamePremiumLRS) {
 			return nil, status.Errorf(codes.InvalidArgument, fmt.Sprintf("Invalid skuName value: %s, as Azure Stack only supports %s and %s Storage Account types.", storageAccountType, storage.SkuNamePremiumLRS, storage.SkuNameStandardLRS))
 		}
 	}
@@ -299,11 +313,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	}
 
 	if strings.TrimSpace(storageEndpointSuffix) == "" {
-		if d.cloud.Environment.StorageEndpointSuffix != "" {
-			storageEndpointSuffix = d.cloud.Environment.StorageEndpointSuffix
-		} else {
-			storageEndpointSuffix = defaultStorageEndPointSuffix
-		}
+		storageEndpointSuffix = d.getStorageEndPointSuffix()
 	}
 
 	accountOptions := &azure.AccountOptions{
@@ -419,12 +429,11 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	}
 
 	if req.GetVolumeContentSource() != nil {
-		if accountKey == "" {
-			if _, accountKey, err = d.GetStorageAccesskey(ctx, accountOptions, secrets, secretName, secretNamespace); err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to GetStorageAccesskey on account(%s) rg(%s), error: %v", accountOptions.Name, accountOptions.ResourceGroup, err)
-			}
+		accountSASToken, authAzcopyEnv, err := d.getAzcopyAuth(ctx, accountName, accountKey, storageEndpointSuffix, accountOptions, secrets, secretName, secretNamespace)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to getAzcopyAuth on account(%s) rg(%s), error: %v", accountOptions.Name, accountOptions.ResourceGroup, err)
 		}
-		if err := d.copyVolume(ctx, req, accountKey, validContainerName, storageEndpointSuffix); err != nil {
+		if err := d.copyVolume(req, accountSASToken, authAzcopyEnv, validContainerName, storageEndpointSuffix); err != nil {
 			return nil, err
 		}
 	} else {
@@ -444,7 +453,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			}
 		}
 
-		secretName, err := setAzureCredentials(ctx, d.cloud.KubeClient, accountName, accountKey, secretNamespace)
+		secretName, err := setAzureCredentials(ctx, d.KubeClient, accountName, accountKey, secretNamespace)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to store storage account key: %v", err)
 		}
@@ -558,7 +567,7 @@ func (d *Driver) ValidateVolumeCapabilities(ctx context.Context, req *csi.Valida
 	var exist bool
 	secrets := req.GetSecrets()
 	if len(secrets) > 0 {
-		container, err := getContainerReference(containerName, secrets, d.cloud.Environment)
+		container, err := getContainerReference(containerName, secrets, d.getCloudEnvironment())
 		if err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
@@ -570,8 +579,12 @@ func (d *Driver) ValidateVolumeCapabilities(ctx context.Context, req *csi.Valida
 		if resourceGroupName == "" {
 			resourceGroupName = d.cloud.ResourceGroup
 		}
-		blobContainer, retryErr := d.cloud.BlobClient.GetContainer(ctx, subsID, resourceGroupName, accountName, containerName)
-		err = retryErr.Error()
+		blobClient, err := d.clientFactory.GetBlobContainerClientForSub(subsID)
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		blobContainer, err := blobClient.Get(ctx, resourceGroupName, accountName, containerName)
 		if err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
@@ -673,18 +686,23 @@ func (d *Driver) CreateBlobContainer(ctx context.Context, subsID, resourceGroupN
 	return wait.ExponentialBackoff(d.cloud.RequestBackoff(), func() (bool, error) {
 		var err error
 		if len(secrets) > 0 {
-			container, getErr := getContainerReference(containerName, secrets, d.cloud.Environment)
+			container, getErr := getContainerReference(containerName, secrets, d.getCloudEnvironment())
 			if getErr != nil {
 				return true, getErr
 			}
 			_, err = container.CreateIfNotExists(&azstorage.CreateContainerOptions{Access: azstorage.ContainerAccessTypePrivate})
 		} else {
-			blobContainer := storage.BlobContainer{
-				ContainerProperties: &storage.ContainerProperties{
-					PublicAccess: storage.PublicAccessNone,
+			blobContainer := armstorage.BlobContainer{
+				ContainerProperties: &armstorage.ContainerProperties{
+					PublicAccess: to.Ptr(armstorage.PublicAccessNone),
 				},
 			}
-			err = d.cloud.BlobClient.CreateContainer(ctx, subsID, resourceGroupName, accountName, containerName, blobContainer).Error()
+			var blobClient blobcontainerclient.Interface
+			blobClient, err = d.clientFactory.GetBlobContainerClientForSub(subsID)
+			if err != nil {
+				return true, err
+			}
+			_, err = blobClient.CreateContainer(ctx, resourceGroupName, accountName, containerName, blobContainer)
 		}
 		if err != nil {
 			if strings.Contains(err.Error(), containerBeingDeletedDataplaneAPIError) ||
@@ -705,13 +723,18 @@ func (d *Driver) DeleteBlobContainer(ctx context.Context, subsID, resourceGroupN
 	return wait.ExponentialBackoff(d.cloud.RequestBackoff(), func() (bool, error) {
 		var err error
 		if len(secrets) > 0 {
-			container, getErr := getContainerReference(containerName, secrets, d.cloud.Environment)
+			container, getErr := getContainerReference(containerName, secrets, d.getCloudEnvironment())
 			if getErr != nil {
 				return true, getErr
 			}
 			_, err = container.DeleteIfExists(nil)
 		} else {
-			err = d.cloud.BlobClient.DeleteContainer(ctx, subsID, resourceGroupName, accountName, containerName).Error()
+			var blobClient blobcontainerclient.Interface
+			blobClient, err = d.clientFactory.GetBlobContainerClientForSub(subsID)
+			if err != nil {
+				return true, err
+			}
+			err = blobClient.DeleteContainer(ctx, resourceGroupName, accountName, containerName)
 		}
 		if err != nil {
 			if strings.Contains(err.Error(), containerBeingDeletedDataplaneAPIError) ||
@@ -728,7 +751,7 @@ func (d *Driver) DeleteBlobContainer(ctx context.Context, subsID, resourceGroupN
 }
 
 // CopyBlobContainer copies a blob container in the same storage account
-func (d *Driver) copyBlobContainer(_ context.Context, req *csi.CreateVolumeRequest, accountKey, dstContainerName, storageEndpointSuffix string) error {
+func (d *Driver) copyBlobContainer(req *csi.CreateVolumeRequest, accountSasToken string, authAzcopyEnv []string, dstContainerName, storageEndpointSuffix string) error {
 	var sourceVolumeID string
 	if req.GetVolumeContentSource() != nil && req.GetVolumeContentSource().GetVolume() != nil {
 		sourceVolumeID = req.GetVolumeContentSource().GetVolume().GetVolumeId()
@@ -742,58 +765,129 @@ func (d *Driver) copyBlobContainer(_ context.Context, req *csi.CreateVolumeReque
 		return fmt.Errorf("srcContainerName(%s) or dstContainerName(%s) is empty", srcContainerName, dstContainerName)
 	}
 
-	klog.V(2).Infof("generate sas token for account(%s)", accountName)
-	accountSasToken, genErr := generateSASToken(accountName, accountKey, storageEndpointSuffix, d.sasTokenExpirationMinutes)
-	if genErr != nil {
-		return genErr
-	}
-
-	timeAfter := time.After(waitForCopyTimeout)
-	timeTick := time.Tick(waitForCopyInterval)
 	srcPath := fmt.Sprintf("https://%s.blob.%s/%s%s", accountName, storageEndpointSuffix, srcContainerName, accountSasToken)
 	dstPath := fmt.Sprintf("https://%s.blob.%s/%s%s", accountName, storageEndpointSuffix, dstContainerName, accountSasToken)
 
-	jobState, percent, err := d.azcopy.GetAzcopyJob(dstContainerName)
+	jobState, percent, err := d.azcopy.GetAzcopyJob(dstContainerName, authAzcopyEnv)
 	klog.V(2).Infof("azcopy job status: %s, copy percent: %s%%, error: %v", jobState, percent, err)
-	if jobState == util.AzcopyJobError || jobState == util.AzcopyJobCompleted {
+	switch jobState {
+	case util.AzcopyJobError, util.AzcopyJobCompleted:
 		return err
-	}
-	klog.V(2).Infof("begin to copy blob container %s to %s", srcContainerName, dstContainerName)
-	for {
-		select {
-		case <-timeTick:
-			jobState, percent, err := d.azcopy.GetAzcopyJob(dstContainerName)
-			klog.V(2).Infof("azcopy job status: %s, copy percent: %s%%, error: %v", jobState, percent, err)
-			switch jobState {
-			case util.AzcopyJobError, util.AzcopyJobCompleted:
-				return err
-			case util.AzcopyJobNotFound:
-				klog.V(2).Infof("copy blob container %s to %s", srcContainerName, dstContainerName)
-				out, copyErr := exec.Command("azcopy", "copy", srcPath, dstPath, "--recursive", "--check-length=false").CombinedOutput()
-				if copyErr != nil {
-					klog.Warningf("CopyBlobContainer(%s, %s, %s) failed with error(%v): %v", resourceGroupName, accountName, dstPath, copyErr, string(out))
-				} else {
-					klog.V(2).Infof("copied blob container %s to %s successfully", srcContainerName, dstContainerName)
-				}
-				return copyErr
+	case util.AzcopyJobRunning:
+		return fmt.Errorf("wait for the existing AzCopy job to complete, current copy percentage is %s%%", percent)
+	case util.AzcopyJobNotFound:
+		klog.V(2).Infof("copy blob container %s to %s", srcContainerName, dstContainerName)
+		execFunc := func() error {
+			cmd := exec.Command("azcopy", "copy", srcPath, dstPath, "--recursive", "--check-length=false")
+			if len(authAzcopyEnv) > 0 {
+				cmd.Env = append(os.Environ(), authAzcopyEnv...)
 			}
-		case <-timeAfter:
-			return fmt.Errorf("timeout waiting for copy blob container %s to %s succeed", srcContainerName, dstContainerName)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("exec error: %v, output: %v", err, string(out))
+			}
+			return nil
 		}
+		timeoutFunc := func() error {
+			_, percent, _ := d.azcopy.GetAzcopyJob(dstContainerName, authAzcopyEnv)
+			return fmt.Errorf("timeout waiting for copy blob container %s to %s complete, current copy percent: %s%%", srcContainerName, dstContainerName, percent)
+		}
+		copyErr := util.WaitUntilTimeout(time.Duration(d.waitForAzCopyTimeoutMinutes)*time.Minute, execFunc, timeoutFunc)
+		if copyErr != nil {
+			klog.Warningf("CopyBlobContainer(%s, %s, %s) failed with error: %v", resourceGroupName, accountName, dstPath, copyErr)
+		} else {
+			klog.V(2).Infof("copied blob container %s to %s successfully", srcContainerName, dstContainerName)
+		}
+		return copyErr
 	}
+	return err
 }
 
 // copyVolume copies a volume form volume or snapshot, snapshot is not supported now
-func (d *Driver) copyVolume(ctx context.Context, req *csi.CreateVolumeRequest, accountKey, dstContainerName, storageEndpointSuffix string) error {
+func (d *Driver) copyVolume(req *csi.CreateVolumeRequest, accountSASToken string, authAzcopyEnv []string, dstContainerName, storageEndpointSuffix string) error {
 	vs := req.VolumeContentSource
 	switch vs.Type.(type) {
 	case *csi.VolumeContentSource_Snapshot:
 		return status.Errorf(codes.InvalidArgument, "copy volume from volumeSnapshot is not supported")
 	case *csi.VolumeContentSource_Volume:
-		return d.copyBlobContainer(ctx, req, accountKey, dstContainerName, storageEndpointSuffix)
+		return d.copyBlobContainer(req, accountSASToken, authAzcopyEnv, dstContainerName, storageEndpointSuffix)
 	default:
 		return status.Errorf(codes.InvalidArgument, "%v is not a proper volume source", vs)
 	}
+}
+
+// authorizeAzcopyWithIdentity returns auth env for azcopy using cluster identity
+func (d *Driver) authorizeAzcopyWithIdentity() ([]string, error) {
+	azureAuthConfig := d.cloud.Config.AzureAuthConfig
+	var authAzcopyEnv []string
+	if azureAuthConfig.UseManagedIdentityExtension {
+		authAzcopyEnv = append(authAzcopyEnv, fmt.Sprintf("%s=%s", azcopyAutoLoginType, MSI))
+		if len(azureAuthConfig.UserAssignedIdentityID) > 0 {
+			klog.V(2).Infof("use user assigned managed identity to authorize azcopy")
+			authAzcopyEnv = append(authAzcopyEnv, fmt.Sprintf("%s=%s", azcopyMSIClientID, azureAuthConfig.UserAssignedIdentityID))
+		} else {
+			klog.V(2).Infof("use system-assigned managed identity to authorize azcopy")
+		}
+		return authAzcopyEnv, nil
+	}
+	if len(azureAuthConfig.AADClientSecret) > 0 {
+		klog.V(2).Infof("use service principal to authorize azcopy")
+		authAzcopyEnv = append(authAzcopyEnv, fmt.Sprintf("%s=%s", azcopyAutoLoginType, SPN))
+		if azureAuthConfig.AADClientID == "" || azureAuthConfig.TenantID == "" {
+			return []string{}, fmt.Errorf("AADClientID and TenantID must be set when use service principal")
+		}
+		authAzcopyEnv = append(authAzcopyEnv, fmt.Sprintf("%s=%s", azcopySPAApplicationID, azureAuthConfig.AADClientID))
+		authAzcopyEnv = append(authAzcopyEnv, fmt.Sprintf("%s=%s", azcopySPAClientSecret, azureAuthConfig.AADClientSecret))
+		authAzcopyEnv = append(authAzcopyEnv, fmt.Sprintf("%s=%s", azcopyTenantID, azureAuthConfig.TenantID))
+		klog.V(2).Infof(fmt.Sprintf("set AZCOPY_SPA_APPLICATION_ID=%s, AZCOPY_TENANT_ID=%s successfully", azureAuthConfig.AADClientID, azureAuthConfig.TenantID))
+
+		return authAzcopyEnv, nil
+	}
+	return []string{}, fmt.Errorf("service principle or managed identity are both not set")
+}
+
+// getAzcopyAuth will only generate sas token for azcopy in following conditions:
+// 1. secrets is not empty
+// 2. driver is not using managed identity and service principal
+// 3. azcopy returns AuthorizationPermissionMismatch error when using service principal or managed identity
+func (d *Driver) getAzcopyAuth(ctx context.Context, accountName, accountKey, storageEndpointSuffix string, accountOptions *azure.AccountOptions, secrets map[string]string, secretName, secretNamespace string) (string, []string, error) {
+	var authAzcopyEnv []string
+	var err error
+	useSasToken := false
+	if !d.useDataPlaneAPI("", accountName) && len(secrets) == 0 && len(secretName) == 0 {
+		// search in cache first
+		if cache, err := d.azcopySasTokenCache.Get(accountName, azcache.CacheReadTypeDefault); err == nil && cache != nil {
+			klog.V(2).Infof("use sas token for account(%s) since this account is found in azcopySasTokenCache", accountName)
+			return cache.(string), nil, nil
+		}
+
+		authAzcopyEnv, err = d.authorizeAzcopyWithIdentity()
+		if err != nil {
+			klog.Warningf("failed to authorize azcopy with identity, error: %v", err)
+		} else {
+			if len(authAzcopyEnv) > 0 {
+				out, testErr := d.azcopy.TestListJobs(accountName, storageEndpointSuffix, authAzcopyEnv)
+				if testErr != nil {
+					return "", nil, fmt.Errorf("azcopy list command failed with error(%v): %v", testErr, out)
+				}
+				if strings.Contains(out, authorizationPermissionMismatch) {
+					klog.Warningf("azcopy list failed with AuthorizationPermissionMismatch error, should assign \"Storage Blob Data Contributor\" role to controller identity, fall back to use sas token, original output: %v", out)
+					useSasToken = true
+				}
+			}
+		}
+	}
+
+	if len(secrets) > 0 || len(secretName) > 0 || len(authAzcopyEnv) == 0 || useSasToken {
+		if accountKey == "" {
+			if _, accountKey, err = d.GetStorageAccesskey(ctx, accountOptions, secrets, secretName, secretNamespace); err != nil {
+				return "", nil, err
+			}
+		}
+		klog.V(2).Infof("generate sas token for account(%s)", accountName)
+		sasToken, err := d.generateSASToken(accountName, accountKey, storageEndpointSuffix, d.sasTokenExpirationMinutes)
+		return sasToken, nil, err
+	}
+	return "", authAzcopyEnv, nil
 }
 
 // isValidVolumeCapabilities validates the given VolumeCapability array is valid
@@ -822,19 +916,33 @@ func parseDays(dayStr string) (int32, error) {
 }
 
 // generateSASToken generate a sas token for storage account
-func generateSASToken(accountName, accountKey, storageEndpointSuffix string, expiryTime int) (string, error) {
+func (d *Driver) generateSASToken(accountName, accountKey, storageEndpointSuffix string, expiryTime int) (string, error) {
+	// search in cache first
+	cache, err := d.azcopySasTokenCache.Get(accountName, azcache.CacheReadTypeDefault)
+	if err != nil {
+		return "", fmt.Errorf("get(%s) from azcopySasTokenCache failed with error: %v", accountName, err)
+	}
+	if cache != nil {
+		klog.V(2).Infof("use sas token for account(%s) since this account is found in azcopySasTokenCache", accountName)
+		return cache.(string), nil
+	}
+
 	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
 	if err != nil {
 		return "", status.Errorf(codes.Internal, fmt.Sprintf("failed to generate sas token in creating new shared key credential, accountName: %s, err: %s", accountName, err.Error()))
 	}
-	serviceClient, err := service.NewClientWithSharedKeyCredential(fmt.Sprintf("https://%s.blob.%s/", accountName, storageEndpointSuffix), credential, nil)
+	clientOptions := service.ClientOptions{}
+	clientOptions.InsecureAllowCredentialWithHTTP = true
+	serviceClient, err := service.NewClientWithSharedKeyCredential(fmt.Sprintf("https://%s.blob.%s/", accountName, storageEndpointSuffix), credential, &clientOptions)
 	if err != nil {
 		return "", status.Errorf(codes.Internal, fmt.Sprintf("failed to generate sas token in creating new client with shared key credential, accountName: %s, err: %s", accountName, err.Error()))
 	}
 	sasURL, err := serviceClient.GetSASURL(
 		sas.AccountResourceTypes{Object: true, Service: false, Container: true},
 		sas.AccountPermissions{Read: true, List: true, Write: true},
-		sas.AccountServices{Blob: true}, time.Now(), time.Now().Add(time.Duration(expiryTime)*time.Minute))
+		time.Now().Add(time.Duration(expiryTime)*time.Minute),
+		&service.GetSASURLOptions{StartTime: to.Ptr(time.Now())},
+	)
 	if err != nil {
 		return "", err
 	}
@@ -842,5 +950,7 @@ func generateSASToken(accountName, accountKey, storageEndpointSuffix string, exp
 	if err != nil {
 		return "", err
 	}
-	return "?" + u.RawQuery, nil
+	sasToken := "?" + u.RawQuery
+	d.azcopySasTokenCache.Set(accountName, sasToken)
+	return sasToken, nil
 }

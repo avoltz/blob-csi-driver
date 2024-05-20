@@ -2,6 +2,7 @@
 ![linux build status](https://github.com/kubernetes-sigs/blob-csi-driver/actions/workflows/linux.yaml/badge.svg)
 [![Coverage Status](https://coveralls.io/repos/github/kubernetes-sigs/blob-csi-driver/badge.svg?branch=master)](https://coveralls.io/github/kubernetes-sigs/blob-csi-driver?branch=master)
 [![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fkubernetes-sigs%2Fblob-csi-driver.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fkubernetes-sigs%2Fblob-csi-driver?ref=badge_shield)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/blob-csi-driver)](https://artifacthub.io/packages/search?repo=blob-csi-driver)
 
 ### About
 This driver allows Kubernetes to access Azure Storage through one of following methods:
@@ -18,9 +19,9 @@ Disclaimer: Deploying this driver manually is not an officially supported Micros
 |driver version  |Image                                                 | supported k8s version |
 |----------------|------------------------------------------------------|-----------------------|
 |master branch   |mcr.microsoft.com/k8s/csi/blob-csi:latest             | 1.21+                 |
-|v1.23.2         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.23.2 | 1.21+                 |
-|v1.22.4         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.22.4 | 1.21+                 |
-|v1.21.6         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.21.6 | 1.21+                 |
+|v1.24.0         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.24.0 | 1.21+                 |
+|v1.23.3         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.23.3 | 1.21+                 |
+|v1.22.5         |mcr.microsoft.com/oss/kubernetes-csi/blob-csi:v1.22.5 | 1.21+                 |
 
 ### Driver parameters
 Please refer to `blob.csi.azure.com` [driver parameters](./docs/driver-parameters.md)
@@ -42,7 +43,7 @@ This option does not depend on cloud provider config file, supports cross subscr
 >
 > Execute following command to install a specific version of blobfuse v2 once driver is running on the agent node:
 > ```console
-> kubectl patch daemonset csi-blob-node -n kube-system -p '{"spec":{"template":{"spec":{"initContainers":[{"env":[{"name":"INSTALL_BLOBFUSE2","value":"true"},{"name":"BLOBFUSE2_VERSION","value":"2.1.2"}],"name":"install-blobfuse-proxy"}]}}}}'
+> kubectl patch daemonset csi-blob-node -n kube-system -p '{"spec":{"template":{"spec":{"initContainers":[{"env":[{"name":"INSTALL_BLOBFUSE2","value":"true"},{"name":"BLOBFUSE2_VERSION","value":"2.2.1"}],"name":"install-blobfuse-proxy"}]}}}}'
 > ```
 >
 > Execute following command to install a specific version of blobfuse v1 once driver is running on the agent node:
@@ -58,12 +59,14 @@ This option does not depend on cloud provider config file, supports cross subscr
  - install managed CSI driver on following platforms:
    - [AKS](https://learn.microsoft.com/en-us/azure/aks/azure-blob-csi)
 
-### Usage
+### Examples
  - [Basic usage](./deploy/example/e2e_usage.md)
+
+### Usage
  - [NFSv3](./deploy/example/nfs)
  - [fsGroupPolicy](./deploy/example/fsgroup)
  - [Volume cloning](./deploy/example/cloning)
- - [Workload identity](./docs/workload-identity.md)
+ - [Workload identity](./docs/workload-identity-static-pv-mount.md)
 
 ### Troubleshooting
  - [CSI driver troubleshooting guide](./docs/csi-debug.md)

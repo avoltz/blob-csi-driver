@@ -17,6 +17,9 @@ limitations under the License.
 package blob
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"strconv"
@@ -24,15 +27,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2021-09-01/storage"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	azstorage "github.com/Azure/azure-sdk-for-go/storage"
 	az "github.com/Azure/go-autorest/autorest/azure"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/pborman/uuid"
-	"golang.org/x/net/context"
-
+	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	apierror "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
@@ -43,7 +45,9 @@ import (
 	csicommon "sigs.k8s.io/blob-csi-driver/pkg/csi-common"
 	"sigs.k8s.io/blob-csi-driver/pkg/edgecache"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azclient"
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
+	"sigs.k8s.io/cloud-provider-azure/pkg/provider"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
 )
 
@@ -79,6 +83,12 @@ const (
 	getAccountKeyFromSecretField   = "getaccountkeyfromsecret"
 	storageSPNClientIDField        = "azurestoragespnclientid"
 	storageSPNTenantIDField        = "azurestoragespntenantid"
+	storageAuthTypeField           = "azurestorageauthtype"
+	storageIdentityClientIDField   = "azurestorageidentityclientid"
+	storageIdentityObjectIDField   = "azurestorageidentityobjectid"
+	storageIdentityResourceIDField = "azurestorageidentityresourceid"
+	msiEndpointField               = "msiendpoint"
+	storageAADEndpointField        = "azurestorageaadendpoint"
 	keyVaultURLField               = "keyvaulturl"
 	keyVaultSecretNameField        = "keyvaultsecretname"
 	keyVaultSecretVersionField     = "keyvaultsecretversion"
@@ -87,6 +97,9 @@ const (
 	requireInfraEncryptionField    = "requireinfraencryption"
 	ephemeralField                 = "csi.storage.k8s.io/ephemeral"
 	podNamespaceField              = "csi.storage.k8s.io/pod.namespace"
+	serviceAccountTokenField       = "csi.storage.k8s.io/serviceAccount.tokens"
+	clientIDField                  = "clientID"
+	tenantIDField                  = "tenantID"
 	mountOptionsField              = "mountoptions"
 	falseValue                     = "false"
 	trueValue                      = "true"
@@ -100,21 +113,18 @@ const (
 	Fuse2                          = "fuse2"
 	NFS                            = "nfs"
 	AZNFS                          = "aznfs"
+	NFSv3                          = "nfsv3"
 	vnetResourceGroupField         = "vnetresourcegroup"
 	vnetNameField                  = "vnetname"
 	subnetNameField                = "subnetname"
 	accessTierField                = "accesstier"
 	networkEndpointTypeField       = "networkendpointtype"
 	mountPermissionsField          = "mountpermissions"
+	fsGroupChangePolicyField       = "fsgroupchangepolicy"
 	useDataPlaneAPIField           = "usedataplaneapi"
 	EcStrgAuthenticationField      = "edgecache-storage-auth"
 	getLatestAccountKeyField       = "getlatestaccountkey"
-	storageAuthTypeField           = "azurestorageauthtype"
 	storageIentityClientIDField    = "azurestorageidentityclientid"
-	storageIdentityObjectIDField   = "azurestorageidentityobjectid"
-	storageIdentityResourceIDField = "azurestorageidentityresourceid"
-	msiEndpointField               = "msiendpoint"
-	storageAADEndpointField        = "azurestorageaadendpoint"
 
 	// See https://docs.microsoft.com/en-us/rest/api/storageservices/naming-and-referencing-containers--blobs--and-metadata#container-names
 	containerNameMinLength = 3
@@ -145,11 +155,14 @@ const (
 	VolumeID = "volumeid"
 
 	defaultStorageEndPointSuffix = "core.windows.net"
+
+	FSGroupChangeNone = "None"
 )
 
 var (
-	supportedProtocolList = []string{EcProtocol, Fuse, Fuse2, NFS}
-	retriableErrors       = []string{accountNotProvisioned, tooManyRequests, statusCodeNotFound, containerBeingDeletedDataplaneAPIError, containerBeingDeletedManagementAPIError, clientThrottled}
+	supportedProtocolList            = []string{EcProtocol, Fuse, Fuse2, NFS, AZNFS}
+	retriableErrors                  = []string{accountNotProvisioned, tooManyRequests, statusCodeNotFound, containerBeingDeletedDataplaneAPIError, containerBeingDeletedManagementAPIError, clientThrottled}
+	supportedFSGroupChangePolicyList = []string{FSGroupChangeNone, string(v1.FSGroupChangeAlways), string(v1.FSGroupChangeOnRootMismatch)}
 )
 
 // DriverOptions defines driver parameters specified in driver deployment
@@ -172,6 +185,33 @@ type DriverOptions struct {
 	EnableAznfsMount                       bool
 	VolStatsCacheExpireInMinutes           int
 	SasTokenExpirationMinutes              int
+	WaitForAzCopyTimeoutMinutes            int
+	EnableVolumeMountGroup                 bool
+	FSGroupChangePolicy                    string
+}
+
+func (option *DriverOptions) AddFlags() {
+	flag.StringVar(&option.BlobfuseProxyEndpoint, "blobfuse-proxy-endpoint", "unix://tmp/blobfuse-proxy.sock", "blobfuse-proxy endpoint")
+	flag.StringVar(&option.NodeID, "nodeid", "", "node id")
+	flag.StringVar(&option.DriverName, "drivername", DefaultDriverName, "name of the driver")
+	flag.BoolVar(&option.EnableBlobfuseProxy, "enable-blobfuse-proxy", false, "using blobfuse proxy for mounts")
+	flag.IntVar(&option.BlobfuseProxyConnTimout, "blobfuse-proxy-connect-timeout", 5, "blobfuse proxy connection timeout(seconds)")
+	flag.BoolVar(&option.EnableBlobMockMount, "enable-blob-mock-mount", false, "enable mock mount(only for testing)")
+	flag.BoolVar(&option.EnableGetVolumeStats, "enable-get-volume-stats", false, "allow GET_VOLUME_STATS on agent node")
+	flag.BoolVar(&option.AppendTimeStampInCacheDir, "append-timestamp-cache-dir", false, "append timestamp into cache directory on agent node")
+	flag.Uint64Var(&option.MountPermissions, "mount-permissions", 0777, "mounted folder permissions")
+	flag.BoolVar(&option.AllowInlineVolumeKeyAccessWithIdentity, "allow-inline-volume-key-access-with-idenitity", false, "allow accessing storage account key using cluster identity for inline volume")
+	flag.BoolVar(&option.AppendMountErrorHelpLink, "append-mount-error-help-link", true, "Whether to include a link for help with mount errors when a mount error occurs.")
+	flag.BoolVar(&option.EnableAznfsMount, "enable-aznfs-mount", false, "replace nfs mount with aznfs mount")
+	flag.IntVar(&option.VolStatsCacheExpireInMinutes, "vol-stats-cache-expire-in-minutes", 10, "The cache expire time in minutes for volume stats cache")
+	flag.IntVar(&option.SasTokenExpirationMinutes, "sas-token-expiration-minutes", 1440, "sas token expiration minutes during volume cloning")
+	flag.IntVar(&option.WaitForAzCopyTimeoutMinutes, "wait-for-azcopy-timeout-minutes", 18, "timeout in minutes for waiting for azcopy to finish")
+	flag.BoolVar(&option.EnableVolumeMountGroup, "enable-volume-mount-group", true, "indicates whether enabling VOLUME_MOUNT_GROUP")
+	flag.StringVar(&option.FSGroupChangePolicy, "fsgroup-change-policy", "", "indicates how the volume's ownership will be changed by the driver, OnRootMismatch is the default value")
+	flag.StringVar(&option.EdgeCacheConfigEndpoint, "edgecache-config-endpoint", "hydrad-config:8675", "edgecache config endpoint")
+	flag.StringVar(&option.EdgeCacheMountEndpoint, "edgecache-mount-endpoint", "unix://tmp/csi-mounts.sock", "edgecache mount endpoint")
+	flag.IntVar(&option.EdgeCacheConnTimeout, "edgecache-connect-timeout", 5, "edgecache connection timeout(seconds)")
+	flag.BoolVar(&option.EnableEdgeCacheFinalizer, "enable-edge-cache-finalizer", true, "enable edgecache finalizer")
 }
 
 // Driver implements all interfaces of CSI drivers
@@ -179,6 +219,9 @@ type Driver struct {
 	csicommon.CSIDriver
 
 	cloud                 *azure.Cloud
+	clientFactory         azclient.ClientFactory
+	networkClientFactory  azclient.ClientFactory
+	KubeClient            kubernetes.Interface
 	blobfuseProxyEndpoint string
 	// enableBlobMockMount is only for testing, DO NOT set as true in non-testing scenario
 	enableBlobMockMount                    bool
@@ -192,6 +235,8 @@ type Driver struct {
 	mountPermissions                       uint64
 	edgeCacheManager                       *edgecache.Manager
 	enableAznfsMount                       bool
+	enableVolumeMountGroup                 bool
+	fsGroupChangePolicy                    string
 	mounter                                *mount.SafeFormatAndMount
 	volLockMap                             *util.LockMap
 	// A map storing all volumes with ongoing operations so that additional operations
@@ -207,15 +252,19 @@ type Driver struct {
 	accountSearchCache azcache.Resource
 	// a timed cache storing volume stats <volumeID, volumeStats>
 	volStatsCache azcache.Resource
+	// a timed cache storing account which should use sastoken for azcopy based volume cloning
+	azcopySasTokenCache azcache.Resource
 	// sas expiry time for azcopy in volume clone
 	sasTokenExpirationMinutes int
+	// timeout in minutes for waiting for azcopy to finish
+	waitForAzCopyTimeoutMinutes int
 	// azcopy for provide exec mock for ut
 	azcopy *util.Azcopy
 }
 
 // NewDriver Creates a NewCSIDriver object. Assumes vendor version is equal to driver version &
 // does not support optional driver plugin info manifest field. Refer to CSI spec for more details.
-func NewDriver(options *DriverOptions, cloud *azure.Cloud) *Driver {
+func NewDriver(options *DriverOptions, kubeClient kubernetes.Interface, cloud *provider.Cloud) *Driver {
 	d := Driver{
 		volLockMap:                             util.NewLockMap(),
 		subnetLockMap:                          util.NewLockMap(),
@@ -228,22 +277,34 @@ func NewDriver(options *DriverOptions, cloud *azure.Cloud) *Driver {
 		blobfuseProxyConnTimout:                options.BlobfuseProxyConnTimout,
 		enableBlobMockMount:                    options.EnableBlobMockMount,
 		enableGetVolumeStats:                   options.EnableGetVolumeStats,
+		enableVolumeMountGroup:                 options.EnableVolumeMountGroup,
 		appendMountErrorHelpLink:               options.AppendMountErrorHelpLink,
 		mountPermissions:                       options.MountPermissions,
 		enableAznfsMount:                       options.EnableAznfsMount,
 		sasTokenExpirationMinutes:              options.SasTokenExpirationMinutes,
+		waitForAzCopyTimeoutMinutes:            options.WaitForAzCopyTimeoutMinutes,
+		fsGroupChangePolicy:                    options.FSGroupChangePolicy,
 		azcopy:                                 &util.Azcopy{},
+		KubeClient:                             kubeClient,
+		cloud:                                  cloud,
 	}
 	d.Name = options.DriverName
 	d.Version = driverVersion
 	d.NodeID = options.NodeID
+	if d.cloud != nil {
+		d.clientFactory = d.cloud.ComputeClientFactory
+		d.networkClientFactory = d.cloud.NetworkClientFactory
+	}
 
 	var err error
 	getter := func(key string) (interface{}, error) { return nil, nil }
 	if d.accountSearchCache, err = azcache.NewTimedCache(time.Minute, getter, false); err != nil {
 		klog.Fatalf("%v", err)
 	}
-	if d.dataPlaneAPIVolCache, err = azcache.NewTimedCache(10*time.Minute, getter, false); err != nil {
+	if d.dataPlaneAPIVolCache, err = azcache.NewTimedCache(24*30*time.Hour, getter, false); err != nil {
+		klog.Fatalf("%v", err)
+	}
+	if d.azcopySasTokenCache, err = azcache.NewTimedCache(15*time.Minute, getter, false); err != nil {
 		klog.Fatalf("%v", err)
 	}
 
@@ -253,7 +314,6 @@ func NewDriver(options *DriverOptions, cloud *azure.Cloud) *Driver {
 	if d.volStatsCache, err = azcache.NewTimedCache(time.Duration(options.VolStatsCacheExpireInMinutes)*time.Minute, getter, false); err != nil {
 		klog.Fatalf("%v", err)
 	}
-	d.cloud = cloud
 	d.mounter = &mount.SafeFormatAndMount{
 		Interface: mount.New(""),
 		Exec:      utilexec.New(),
@@ -286,23 +346,46 @@ func NewDriver(options *DriverOptions, cloud *azure.Cloud) *Driver {
 	if d.enableGetVolumeStats {
 		nodeCap = append(nodeCap, csi.NodeServiceCapability_RPC_GET_VOLUME_STATS)
 	}
+	if d.enableVolumeMountGroup {
+		nodeCap = append(nodeCap, csi.NodeServiceCapability_RPC_VOLUME_MOUNT_GROUP)
+	}
 	d.AddNodeServiceCapabilities(nodeCap)
 
 	return &d
 }
 
 // Run driver initialization
-func (d *Driver) Run(endpoint string, testBool bool) {
+func (d *Driver) Run(ctx context.Context, endpoint string) error {
 	versionMeta, err := GetVersionYAML(d.Name)
 	if err != nil {
 		klog.Fatalf("%v", err)
 	}
 	klog.Infof("\nDRIVER INFORMATION:\n-------------------\n%s\n\nStreaming logs below:", versionMeta)
+	grpcInterceptor := grpc.UnaryInterceptor(csicommon.LogGRPC)
+	opts := []grpc.ServerOption{
+		grpcInterceptor,
+	}
+	s := grpc.NewServer(opts...)
+	csi.RegisterIdentityServer(s, d)
+	csi.RegisterControllerServer(s, d)
+	csi.RegisterNodeServer(s, d)
 
-	s := csicommon.NewNonBlockingGRPCServer()
+	go func() {
+		//graceful shutdown
+		<-ctx.Done()
+		s.GracefulStop()
+	}()
 	// Driver d act as IdentityServer, ControllerServer and NodeServer
-	s.Start(endpoint, d, d, d, testBool)
-	s.Wait()
+	listener, err := csicommon.Listen(ctx, endpoint)
+	if err != nil {
+		klog.Fatalf("failed to listen to endpoint, error: %v", err)
+	}
+	err = s.Serve(listener)
+	if errors.Is(err, grpc.ErrServerStopped) {
+		klog.Infof("gRPC server stopped serving")
+		return nil
+	}
+	return err
 }
 
 // GetContainerInfo get container info according to volume id
@@ -396,6 +479,9 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 		authEnv                 []string
 		getAccountKeyFromSecret bool
 		getLatestAccountKey     bool
+		clientID                string
+		tenantID                string
+		serviceAccountToken     string
 	)
 
 	for k, v := range attrib {
@@ -427,7 +513,7 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 		case storageAuthTypeField:
 			azureStorageAuthType = v
 			authEnv = append(authEnv, "AZURE_STORAGE_AUTH_TYPE="+v)
-		case storageIentityClientIDField:
+		case storageIdentityClientIDField:
 			authEnv = append(authEnv, "AZURE_STORAGE_IDENTITY_CLIENT_ID="+v)
 		case storageIdentityObjectIDField:
 			authEnv = append(authEnv, "AZURE_STORAGE_IDENTITY_OBJECT_ID="+v)
@@ -447,6 +533,12 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 			}
 		case EcStrgAuthenticationField:
 			ecStorageAuth = v
+		case strings.ToLower(clientIDField):
+			clientID = v
+		case strings.ToLower(tenantIDField):
+			tenantID = v
+		case strings.ToLower(serviceAccountTokenField):
+			serviceAccountToken = v
 		}
 	}
 	klog.V(2).Infof("volumeID(%s) authEnv: %s", volumeID, authEnv)
@@ -466,6 +558,21 @@ func (d *Driver) GetAuthEnv(ctx context.Context, volumeID, protocol string, attr
 
 	if rgName == "" {
 		rgName = d.cloud.ResourceGroup
+	}
+
+	if tenantID == "" {
+		tenantID = d.cloud.TenantID
+	}
+
+	// if client id is specified, we only use service account token to get account key
+	if clientID != "" {
+		klog.V(2).Infof("clientID(%s) is specified, use service account token to get account key", clientID)
+		if subsID == "" {
+			subsID = d.cloud.SubscriptionID
+		}
+		accountKey, err := d.cloud.GetStorageAccesskeyFromServiceAccountToken(ctx, subsID, accountName, rgName, clientID, tenantID, serviceAccountToken)
+		authEnv = append(authEnv, "AZURE_STORAGE_ACCESS_KEY="+accountKey)
+		return rgName, accountName, accountKey, containerName, secretName, secretNamespace, authEnv, err
 	}
 
 	// 1. If keyVaultURL is not nil, preferentially use the key stored in key vault.
@@ -675,7 +782,7 @@ func isSupportedProtocol(protocol string) bool {
 		return true
 	}
 	for _, v := range supportedProtocolList {
-		if protocol == v {
+		if protocol == v || protocol == NFSv3 {
 			return true
 		}
 	}
@@ -686,7 +793,7 @@ func isSupportedAccessTier(accessTier string) bool {
 	if accessTier == "" {
 		return true
 	}
-	for _, tier := range storage.PossibleAccessTierValues() {
+	for _, tier := range armstorage.PossibleAccessTierValues() {
 		if accessTier == string(tier) {
 			return true
 		}
@@ -717,7 +824,7 @@ func isSupportedContainerNamePrefix(prefix string) bool {
 // isNFSProtocol checks if the protocol is NFS or AZNFS
 func isNFSProtocol(protocol string) bool {
 	protocol = strings.ToLower(protocol)
-	return protocol == NFS || protocol == AZNFS
+	return protocol == NFS || protocol == AZNFS || protocol == NFSv3
 }
 
 // get storage account from secrets map
@@ -791,7 +898,7 @@ func setAzureCredentials(ctx context.Context, kubeClient kubernetes.Interface, a
 		Type: "Opaque",
 	}
 	_, err := kubeClient.CoreV1().Secrets(secretNamespace).Create(ctx, secret, metav1.CreateOptions{})
-	if k8serrors.IsAlreadyExists(err) {
+	if apierror.IsAlreadyExists(err) {
 		err = nil
 	}
 	if err != nil {
@@ -824,11 +931,11 @@ func (d *Driver) GetStorageAccesskey(ctx context.Context, accountOptions *azure.
 // GetInfoFromSecret get info from k8s secret
 // return <accountName, accountKey, accountSasToken, msiSecret, spnClientSecret, spnClientID, spnTenantID, error>
 func (d *Driver) GetInfoFromSecret(ctx context.Context, secretName, secretNamespace string) (string, string, string, string, string, string, string, error) {
-	if d.cloud.KubeClient == nil {
+	if d.KubeClient == nil {
 		return "", "", "", "", "", "", "", fmt.Errorf("could not get account key from secret(%s): KubeClient is nil", secretName)
 	}
 
-	secret, err := d.cloud.KubeClient.CoreV1().Secrets(secretNamespace).Get(ctx, secretName, metav1.GetOptions{})
+	secret, err := d.KubeClient.CoreV1().Secrets(secretNamespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return "", "", "", "", "", "", "", fmt.Errorf("could not get secret(%v): %w", secretName, err)
 	}
@@ -966,6 +1073,20 @@ func setKeyValueInMap(m map[string]string, key, value string) {
 	m[key] = value
 }
 
+// getValueInMap get value from map by key
+// key in the map is case insensitive
+func getValueInMap(m map[string]string, key string) string {
+	if m == nil {
+		return ""
+	}
+	for k, v := range m {
+		if strings.EqualFold(k, key) {
+			return v
+		}
+	}
+	return ""
+}
+
 // replaceWithMap replace key with value for str
 func replaceWithMap(str string, m map[string]string) string {
 	for k, v := range m {
@@ -974,4 +1095,16 @@ func replaceWithMap(str string, m map[string]string) string {
 		}
 	}
 	return str
+}
+
+func isSupportedFSGroupChangePolicy(policy string) bool {
+	if policy == "" {
+		return true
+	}
+	for _, v := range supportedFSGroupChangePolicyList {
+		if policy == v {
+			return true
+		}
+	}
+	return false
 }

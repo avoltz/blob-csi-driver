@@ -36,8 +36,8 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2021-09-01/storage"
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 
 	mount "k8s.io/mount-utils"
 	utilexec "k8s.io/utils/exec"
@@ -435,8 +435,8 @@ func TestNodeStageVolume(t *testing.T) {
 					VolumeCapability:  &csi.VolumeCapability{AccessMode: &volumeCap},
 				}
 				d := NewFakeDriver()
-				d.volumeLocks.TryAcquire("unit-test")
-				defer d.volumeLocks.Release("unit-test")
+				d.volumeLocks.TryAcquire(fmt.Sprintf("%s-%s", "unit-test", "unit-test"))
+				defer d.volumeLocks.Release(fmt.Sprintf("%s-%s", "unit-test", "unit-test"))
 				_, err := d.NodeStageVolume(context.TODO(), req)
 				expectedErr := status.Error(codes.Aborted, fmt.Sprintf(volumeOperationAlreadyExistsFmt, "unit-test"))
 				if !reflect.DeepEqual(err, expectedErr) {
@@ -458,6 +458,25 @@ func TestNodeStageVolume(t *testing.T) {
 				d := NewFakeDriver()
 				_, err := d.NodeStageVolume(context.TODO(), req)
 				expectedErr := status.Error(codes.InvalidArgument, fmt.Sprintf("invalid mountPermissions %s", "07ab"))
+				if !reflect.DeepEqual(err, expectedErr) {
+					t.Errorf("actualErr: (%v), expectedErr: (%v)", err, expectedErr)
+				}
+			},
+		},
+		{
+			name: "[Error] Invalid fsGroupChangePolicy",
+			testFunc: func(t *testing.T) {
+				req := &csi.NodeStageVolumeRequest{
+					VolumeId:          "unit-test",
+					StagingTargetPath: "unit-test",
+					VolumeCapability:  &csi.VolumeCapability{AccessMode: &volumeCap},
+					VolumeContext: map[string]string{
+						fsGroupChangePolicyField: "test_fsGroupChangePolicy",
+					},
+				}
+				d := NewFakeDriver()
+				_, err := d.NodeStageVolume(context.TODO(), req)
+				expectedErr := status.Error(codes.InvalidArgument, "fsGroupChangePolicy(test_fsGroupChangePolicy) is not supported, supported fsGroupChangePolicy list: [None Always OnRootMismatch]")
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("actualErr: (%v), expectedErr: (%v)", err, expectedErr)
 				}
@@ -606,8 +625,8 @@ func TestNodeUnstageVolume(t *testing.T) {
 					VolumeCapability:  &csi.VolumeCapability{AccessMode: &volumeCap},
 				}
 				d := NewFakeDriver()
-				d.volumeLocks.TryAcquire("unit-test")
-				defer d.volumeLocks.Release("unit-test")
+				d.volumeLocks.TryAcquire(fmt.Sprintf("%s-%s", "unit-test", "unit-test"))
+				defer d.volumeLocks.Release(fmt.Sprintf("%s-%s", "unit-test", "unit-test"))
 				_, err := d.NodeStageVolume(context.TODO(), req)
 				expectedErr := status.Error(codes.Aborted, fmt.Sprintf(volumeOperationAlreadyExistsFmt, "unit-test"))
 				if !reflect.DeepEqual(err, expectedErr) {
@@ -810,5 +829,36 @@ func Test_waitForMount(t *testing.T) {
 				t.Errorf("waitForMount() error = %v, wantErr %v", err, tt.subErrMsg)
 			}
 		})
+	}
+}
+
+func TestCheckGidPresentInMountFlags(t *testing.T) {
+	tests := []struct {
+		desc       string
+		MountFlags []string
+		result     bool
+	}{
+		{
+			desc:       "[Success] Gid present in mount flags",
+			MountFlags: []string{"gid=3000"},
+			result:     true,
+		},
+		{
+			desc:       "[Success] Gid present in mount flags",
+			MountFlags: []string{"-o gid=3000"},
+			result:     true,
+		},
+		{
+			desc:       "[Success] Gid not present in mount flags",
+			MountFlags: []string{},
+			result:     false,
+		},
+	}
+
+	for _, test := range tests {
+		gIDPresent := checkGidPresentInMountFlags(test.MountFlags)
+		if gIDPresent != test.result {
+			t.Errorf("[%s]: Expected result : %t, Actual result: %t", test.desc, test.result, gIDPresent)
+		}
 	}
 }

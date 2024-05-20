@@ -21,16 +21,19 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2022-07-01/network"
 	"github.com/Azure/azure-sdk-for-go/storage"
-	"github.com/golang/mock/gomock"
-
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
+	"k8s.io/client-go/kubernetes"
 
+	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/subnetclient/mocksubnetclient"
 	azureprovider "sigs.k8s.io/cloud-provider-azure/pkg/provider"
 
@@ -60,12 +63,7 @@ kind: Config
 users:
 - name: foo-user
   user:
-    exec:
-      apiVersion: client.authentication.k8s.io/v1alpha1
-      args:
-      - arg-1
-      - arg-2
-      command: foo-command
+    token: 2fef7f7c64127579b48d61434c44ad46d87793169ee6a4199af3ce16a3cf5be3371
 `
 
 	err := createTestFile(emptyKubeConfig)
@@ -79,69 +77,104 @@ users:
 	}()
 
 	tests := []struct {
-		desc                  string
-		createFakeCredFile    bool
-		createFakeKubeConfig  bool
-		kubeconfig            string
-		nodeID                string
-		userAgent             string
-		allowEmptyCloudConfig bool
-		expectedErr           error
+		desc                                  string
+		createFakeCredFile                    bool
+		createFakeKubeConfig                  bool
+		setFederatedWorkloadIdentityEnv       bool
+		kubeconfig                            string
+		nodeID                                string
+		userAgent                             string
+		allowEmptyCloudConfig                 bool
+		expectedErr                           error
+		aadFederatedTokenFile                 string
+		useFederatedWorkloadIdentityExtension bool
+		aadClientID                           string
+		tenantID                              string
 	}{
 		{
-			desc:                  "out of cluster, no kubeconfig, no credential file",
-			kubeconfig:            "",
-			nodeID:                "",
-			allowEmptyCloudConfig: true,
-			expectedErr:           nil,
+			desc:                                  "[success] out of cluster, no kubeconfig, no credential file",
+			nodeID:                                "",
+			allowEmptyCloudConfig:                 true,
+			aadFederatedTokenFile:                 "",
+			useFederatedWorkloadIdentityExtension: false,
+			aadClientID:                           "",
+			tenantID:                              "",
+			expectedErr:                           nil,
 		},
 		{
-			desc:                  "[failure][disallowEmptyCloudConfig]  out of cluster, no kubeconfig, no credential file",
-			kubeconfig:            "",
-			nodeID:                "",
-			allowEmptyCloudConfig: false,
-			expectedErr:           nil,
+			desc:                                  "[linux][failure][disallowEmptyCloudConfig] out of cluster, no kubeconfig, no credential file",
+			nodeID:                                "",
+			allowEmptyCloudConfig:                 false,
+			aadFederatedTokenFile:                 "",
+			useFederatedWorkloadIdentityExtension: false,
+			aadClientID:                           "",
+			tenantID:                              "",
+			expectedErr:                           syscall.ENOENT,
 		},
 		{
-			desc:                  "[failure] out of cluster & in cluster, specify a non-exist kubeconfig, no credential file",
-			kubeconfig:            "/tmp/non-exist.json",
-			nodeID:                "",
-			allowEmptyCloudConfig: true,
-			expectedErr:           nil,
+			desc:                                  "[windows][failure][disallowEmptyCloudConfig] out of cluster, no kubeconfig, no credential file",
+			nodeID:                                "",
+			allowEmptyCloudConfig:                 false,
+			aadFederatedTokenFile:                 "",
+			useFederatedWorkloadIdentityExtension: false,
+			aadClientID:                           "",
+			tenantID:                              "",
+			expectedErr:                           syscall.ENOTDIR,
 		},
 		{
-			desc:                  "[failure] out of cluster & in cluster, specify a empty kubeconfig, no credential file",
-			kubeconfig:            emptyKubeConfig,
-			nodeID:                "",
-			allowEmptyCloudConfig: true,
-			expectedErr:           fmt.Errorf("failed to get KubeClient: invalid configuration: no configuration has been provided, try setting KUBERNETES_MASTER environment variable"),
+			desc:                                  "[success] out of cluster & in cluster, specify a fake kubeconfig, no credential file",
+			createFakeKubeConfig:                  true,
+			kubeconfig:                            fakeKubeConfig,
+			nodeID:                                "",
+			allowEmptyCloudConfig:                 true,
+			aadFederatedTokenFile:                 "",
+			useFederatedWorkloadIdentityExtension: false,
+			aadClientID:                           "",
+			tenantID:                              "",
+			expectedErr:                           nil,
 		},
 		{
-			desc:                  "[failure] out of cluster & in cluster, specify a fake kubeconfig, no credential file",
-			createFakeKubeConfig:  true,
-			kubeconfig:            fakeKubeConfig,
-			nodeID:                "",
-			allowEmptyCloudConfig: true,
-			expectedErr:           nil,
+			desc:                                  "[success] out of cluster & in cluster, no kubeconfig, a fake credential file",
+			createFakeCredFile:                    true,
+			nodeID:                                "",
+			userAgent:                             "useragent",
+			allowEmptyCloudConfig:                 true,
+			aadFederatedTokenFile:                 "",
+			useFederatedWorkloadIdentityExtension: false,
+			aadClientID:                           "",
+			tenantID:                              "",
+			expectedErr:                           nil,
 		},
 		{
-			desc:                  "[success] out of cluster & in cluster, no kubeconfig, a fake credential file",
-			createFakeCredFile:    true,
-			kubeconfig:            "",
-			nodeID:                "",
-			userAgent:             "useragent",
-			allowEmptyCloudConfig: true,
-			expectedErr:           nil,
+			desc:                                  "[success] get azure client with workload identity",
+			createFakeKubeConfig:                  true,
+			createFakeCredFile:                    true,
+			setFederatedWorkloadIdentityEnv:       true,
+			kubeconfig:                            fakeKubeConfig,
+			nodeID:                                "",
+			userAgent:                             "useragent",
+			useFederatedWorkloadIdentityExtension: true,
+			aadFederatedTokenFile:                 "fake-token-file",
+			aadClientID:                           "fake-client-id",
+			tenantID:                              "fake-tenant-id",
+			expectedErr:                           nil,
 		},
 	}
 
+	var kubeClient kubernetes.Interface
 	for _, test := range tests {
+		if strings.HasPrefix(test.desc, "[linux]") && runtime.GOOS != "linux" {
+			continue
+		}
+		if strings.HasPrefix(test.desc, "[windows]") && runtime.GOOS != "windows" {
+			continue
+		}
 		if test.createFakeKubeConfig {
 			if err := createTestFile(fakeKubeConfig); err != nil {
 				t.Error(err)
 			}
 			defer func() {
-				if err := os.Remove(fakeKubeConfig); err != nil {
+				if err := os.Remove(fakeKubeConfig); err != nil && !os.IsNotExist(err) {
 					t.Error(err)
 				}
 			}()
@@ -149,13 +182,20 @@ users:
 			if err := os.WriteFile(fakeKubeConfig, []byte(fakeContent), 0666); err != nil {
 				t.Error(err)
 			}
+
+			kubeClient, err = util.GetKubeClient(test.kubeconfig, 25.0, 50, "")
+			if err != nil {
+				t.Error(err)
+			}
+		} else {
+			kubeClient = nil
 		}
 		if test.createFakeCredFile {
 			if err := createTestFile(fakeCredFile); err != nil {
 				t.Error(err)
 			}
 			defer func() {
-				if err := os.Remove(fakeCredFile); err != nil {
+				if err := os.Remove(fakeCredFile); err != nil && !os.IsNotExist(err) {
 					t.Error(err)
 				}
 			}()
@@ -168,15 +208,24 @@ users:
 			}
 			os.Setenv(DefaultAzureCredentialFileEnv, fakeCredFile)
 		}
-		cloud, err := GetCloudProvider(context.Background(), test.kubeconfig, test.nodeID, "", "", test.userAgent, test.allowEmptyCloudConfig, 25.0, 50)
-		if !reflect.DeepEqual(err, test.expectedErr) && test.expectedErr != nil && !strings.Contains(err.Error(), test.expectedErr.Error()) {
-			t.Errorf("desc: %s,\n input: %q, GetCloudProvider err: %v, expectedErr: %v", test.desc, test.kubeconfig, err, test.expectedErr)
+		if test.setFederatedWorkloadIdentityEnv {
+			t.Setenv("AZURE_TENANT_ID", test.tenantID)
+			t.Setenv("AZURE_CLIENT_ID", test.aadClientID)
+			t.Setenv("AZURE_FEDERATED_TOKEN_FILE", test.aadFederatedTokenFile)
 		}
+
+		cloud, err := GetCloudProvider(context.Background(), kubeClient, test.nodeID, "", "", test.userAgent, test.allowEmptyCloudConfig)
+		assert.ErrorIs(t, err, test.expectedErr)
+
 		if cloud == nil {
 			t.Errorf("return value of getCloudProvider should not be nil even there is error")
 		} else {
 			assert.Equal(t, cloud.Environment.StorageEndpointSuffix, storage.DefaultBaseURL)
 			assert.Equal(t, cloud.UserAgent, test.userAgent)
+			assert.Equal(t, cloud.AADFederatedTokenFile, test.aadFederatedTokenFile)
+			assert.Equal(t, cloud.UseFederatedWorkloadIdentityExtension, test.useFederatedWorkloadIdentityExtension)
+			assert.Equal(t, cloud.AADClientID, test.aadClientID)
+			assert.Equal(t, cloud.TenantID, test.tenantID)
 		}
 	}
 }
@@ -375,85 +424,87 @@ func TestUpdateSubnetServiceEndpoints(t *testing.T) {
 	}
 }
 
-func TestGetKubeConfig(t *testing.T) {
-	emptyKubeConfig := "empty-Kube-Config"
-	validKubeConfig := "valid-Kube-Config"
-	fakeContent := `
-apiVersion: v1
-clusters:
-- cluster:
-    server: https://localhost:8080
-  name: foo-cluster
-contexts:
-- context:
-    cluster: foo-cluster
-    user: foo-user
-    namespace: bar
-  name: foo-context
-current-context: foo-context
-kind: Config
-users:
-- name: foo-user
-  user:
-    exec:
-      apiVersion: client.authentication.k8s.io/v1beta1
-      args:
-      - arg-1
-      - arg-2
-      command: foo-command
-`
-	err := createTestFile(emptyKubeConfig)
-	if err != nil {
-		t.Error(err)
-	}
-	defer func() {
-		if err := os.Remove(emptyKubeConfig); err != nil {
-			t.Error(err)
-		}
-	}()
+func TestGetStorageEndPointSuffix(t *testing.T) {
+	d := NewFakeDriver()
 
-	err = createTestFile(validKubeConfig)
-	if err != nil {
-		t.Error(err)
-	}
-	defer func() {
-		if err := os.Remove(validKubeConfig); err != nil {
-			t.Error(err)
-		}
-	}()
-
-	if err := os.WriteFile(validKubeConfig, []byte(fakeContent), 0666); err != nil {
-		t.Error(err)
-	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
 	tests := []struct {
-		desc                     string
-		kubeconfig               string
-		expectError              bool
-		envVariableHasConfig     bool
-		envVariableConfigIsValid bool
+		name           string
+		cloud          *azureprovider.Cloud
+		expectedSuffix string
 	}{
 		{
-			desc:                     "[success] valid kube config passed",
-			kubeconfig:               validKubeConfig,
-			expectError:              false,
-			envVariableHasConfig:     false,
-			envVariableConfigIsValid: false,
+			name:           "nil cloud",
+			cloud:          nil,
+			expectedSuffix: "core.windows.net",
 		},
 		{
-			desc:                     "[failure] invalid kube config passed",
-			kubeconfig:               emptyKubeConfig,
-			expectError:              true,
-			envVariableHasConfig:     false,
-			envVariableConfigIsValid: false,
+			name:           "empty cloud",
+			cloud:          &azureprovider.Cloud{},
+			expectedSuffix: "core.windows.net",
+		},
+		{
+			name: "cloud with storage endpoint suffix",
+			cloud: &azureprovider.Cloud{
+				Environment: azure.Environment{
+					StorageEndpointSuffix: "suffix",
+				},
+			},
+			expectedSuffix: "suffix",
+		},
+		{
+			name: "public cloud",
+			cloud: &azureprovider.Cloud{
+				Environment: azure.PublicCloud,
+			},
+			expectedSuffix: "core.windows.net",
+		},
+		{
+			name: "china cloud",
+			cloud: &azureprovider.Cloud{
+				Environment: azure.ChinaCloud,
+			},
+			expectedSuffix: "core.chinacloudapi.cn",
 		},
 	}
 
 	for _, test := range tests {
-		_, err := getKubeConfig(test.kubeconfig)
-		receiveError := (err != nil)
-		if test.expectError != receiveError {
-			t.Errorf("desc: %s,\n input: %q, GetCloudProvider err: %v, expectErr: %v", test.desc, test.kubeconfig, err, test.expectError)
-		}
+		d.cloud = test.cloud
+		suffix := d.getStorageEndPointSuffix()
+		assert.Equal(t, test.expectedSuffix, suffix, test.name)
+	}
+}
+
+func TestGetCloudEnvironment(t *testing.T) {
+	d := NewFakeDriver()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	tests := []struct {
+		name        string
+		cloud       *azureprovider.Cloud
+		expectedEnv azure.Environment
+	}{
+		{
+			name:        "nil cloud",
+			cloud:       nil,
+			expectedEnv: azure.PublicCloud,
+		},
+		{
+			name: "cloud with environment",
+			cloud: &azureprovider.Cloud{
+				Environment: azure.ChinaCloud,
+			},
+			expectedEnv: azure.ChinaCloud,
+		},
+	}
+
+	for _, test := range tests {
+		d.cloud = test.cloud
+		env := d.getCloudEnvironment()
+		assert.Equal(t, test.expectedEnv, env, test.name)
 	}
 }
