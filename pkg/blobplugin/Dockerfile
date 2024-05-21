@@ -23,16 +23,18 @@ RUN mkdir /blobfuse-proxy/
 COPY ./pkg/blobfuse-proxy/init.sh /blobfuse-proxy/
 COPY ./pkg/blobfuse-proxy/blobfuse-proxy.service /blobfuse-proxy/
 COPY ./_output/${ARCH}/blobfuse-proxy /blobfuse-proxy/
+COPY ./pkg/blobfuse-proxy/install-proxy.sh /blobfuse-proxy/
+COPY ./pkg/blobfuse-proxy/install-proxy-rhcos.sh /blobfuse-proxy/
 
 RUN chmod +x /blobfuse-proxy/init.sh && \
  chmod +x /blobfuse-proxy/blobfuse-proxy.service && \
- chmod +x /blobfuse-proxy/blobfuse-proxy
+ chmod +x /blobfuse-proxy/blobfuse-proxy && \
+ chmod +x /blobfuse-proxy/install-proxy-rhcos.sh && \
+ chmod +x /blobfuse-proxy/install-proxy.sh
 
-# Currently no CBL-Mariner image with fix for "curl"/"zlib" CVE-2023-38545/CVE-2023-38546/CVE-2023-45853.
-# So, temporarily do update here. Remove "curl"/"zlib" when image is updated.
 RUN tdnf updateinfo && \
-    tdnf install -y util-linux e2fsprogs nfs-utils quota-rpc rpcbind blobfuse2 fuse3 libcap-ng libcap ca-certificates curl zlib openssl && \
-    tdnf clean all
+ tdnf install -y util-linux glibc e2fsprogs nfs-utils quota-rpc rpcbind fuse fuse3 blobfuse2 libcap-ng libcap ca-certificates curl zlib openssl && \
+ tdnf clean all
 
 LABEL maintainers="andyzhangx"
 LABEL description="Azure Blob Storage CSI driver"

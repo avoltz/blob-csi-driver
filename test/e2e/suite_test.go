@@ -39,6 +39,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework/config"
 	_ "k8s.io/kubernetes/test/e2e/framework/debug/init"
 	"sigs.k8s.io/blob-csi-driver/pkg/blob"
+	"sigs.k8s.io/blob-csi-driver/pkg/util"
 	"sigs.k8s.io/blob-csi-driver/test/utils/azure"
 	"sigs.k8s.io/blob-csi-driver/test/utils/credentials"
 	"sigs.k8s.io/blob-csi-driver/test/utils/testutil"
@@ -62,8 +63,17 @@ type testCmd struct {
 }
 
 func TestMain(m *testing.M) {
-	handleFlags()
+	flag.StringVar(&projectRoot, "project-root", "", "path to the blob csi driver project root, used for script execution")
+	flag.Parse()
+	if projectRoot == "" {
+		klog.Fatal("project-root must be set")
+	}
 
+	config.CopyFlags(config.Flags, flag.CommandLine)
+	framework.RegisterCommonFlags(flag.CommandLine)
+	framework.RegisterClusterFlags(flag.CommandLine)
+	flag.Parse()
+	framework.AfterReadingAllFlags(&framework.TestContext)
 	os.Exit(m.Run())
 }
 
@@ -151,11 +161,14 @@ var _ = ginkgo.SynchronizedBeforeSuite(func(ctx ginkgo.SpecContext) []byte {
 		BlobfuseProxyConnTimout: 5,
 		EnableBlobMockMount:     false,
 	}
-	cloud, err := blob.GetCloudProvider(context.Background(), kubeconfig, driverOptions.NodeID, "", "", "", false, 0, 0)
+	kubeClient, err := util.GetKubeClient(kubeconfig, 25.0, 50, "")
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	blobDriver = blob.NewDriver(&driverOptions, cloud)
+	cloud, err := blob.GetCloudProvider(context.Background(), kubeClient, driverOptions.NodeID, "", "", "", false)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	blobDriver = blob.NewDriver(&driverOptions, kubeClient, cloud)
 	go func() {
-		blobDriver.Run(fmt.Sprintf("unix:///tmp/csi-%s.sock", uuid.NewUUID().String()), false)
+		err := blobDriver.Run(context.Background(), fmt.Sprintf("unix:///tmp/csi-%s.sock", uuid.NewUUID().String()))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}()
 })
 
@@ -225,27 +238,5 @@ func checkAccountCreationLeak(ctx context.Context) {
 	ginkgo.By(fmt.Sprintf("GetAccountNumByResourceGroup(%s) returns %d accounts", creds.ResourceGroup, accountNum))
 
 	accountLimitInTest := 20
-	framework.ExpectEqual(accountNum >= accountLimitInTest, false, fmt.Sprintf("current account num %d should not exceed %d", accountNum, accountLimitInTest))
-}
-
-// handleFlags sets up all flags and parses the command line.
-func handleFlags() {
-	registerFlags()
-	handleFramworkFlags()
-}
-
-func registerFlags() {
-	flag.StringVar(&projectRoot, "project-root", "", "path to the blob csi driver project root, used for script execution")
-	flag.Parse()
-	if projectRoot == "" {
-		klog.Fatal("project-root must be set")
-	}
-}
-
-func handleFramworkFlags() {
-	config.CopyFlags(config.Flags, flag.CommandLine)
-	framework.RegisterCommonFlags(flag.CommandLine)
-	framework.RegisterClusterFlags(flag.CommandLine)
-	flag.Parse()
-	framework.AfterReadingAllFlags(&framework.TestContext)
+	gomega.Expect(accountNum >= accountLimitInTest).To(gomega.BeFalse())
 }

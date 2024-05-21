@@ -21,12 +21,19 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-ini/ini"
 	"github.com/pkg/errors"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/volume"
 )
 
 const (
@@ -235,14 +242,18 @@ func TrimDuplicatedSpace(s string) string {
 }
 
 type EXEC interface {
-	RunCommand(string) (string, error)
+	RunCommand(string, []string) (string, error)
 }
 
 type ExecCommand struct {
 }
 
-func (ec *ExecCommand) RunCommand(cmd string) (string, error) {
-	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
+func (ec *ExecCommand) RunCommand(cmdStr string, authEnv []string) (string, error) {
+	cmd := exec.Command("sh", "-c", cmdStr)
+	if len(authEnv) > 0 {
+		cmd.Env = append(os.Environ(), authEnv...)
+	}
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
@@ -251,7 +262,7 @@ type Azcopy struct {
 }
 
 // GetAzcopyJob get the azcopy job status if job existed
-func (ac *Azcopy) GetAzcopyJob(dstBlobContainer string) (AzcopyJobState, string, error) {
+func (ac *Azcopy) GetAzcopyJob(dstBlobContainer string, authAzcopyEnv []string) (AzcopyJobState, string, error) {
 	cmdStr := fmt.Sprintf("azcopy jobs list | grep %s -B 3", dstBlobContainer)
 	// cmd output example:
 	// JobId: ed1c3833-eaff-fe42-71d7-513fb065a9d9
@@ -266,7 +277,7 @@ func (ac *Azcopy) GetAzcopyJob(dstBlobContainer string) (AzcopyJobState, string,
 	if ac.ExecCmd == nil {
 		ac.ExecCmd = &ExecCommand{}
 	}
-	out, err := ac.ExecCmd.RunCommand(cmdStr)
+	out, err := ac.ExecCmd.RunCommand(cmdStr, authAzcopyEnv)
 	// if grep command returns nothing, the exec will return exit status 1 error, so filter this error
 	if err != nil && err.Error() != "exit status 1" {
 		klog.Warningf("failed to get azcopy job with error: %v, jobState: %v", err, AzcopyJobError)
@@ -286,7 +297,7 @@ func (ac *Azcopy) GetAzcopyJob(dstBlobContainer string) (AzcopyJobState, string,
 	cmdPercentStr := fmt.Sprintf("azcopy jobs show %s | grep Percent", jobid)
 	// cmd out example:
 	// Percent Complete (approx): 100.0
-	summary, err := ac.ExecCmd.RunCommand(cmdPercentStr)
+	summary, err := ac.ExecCmd.RunCommand(cmdPercentStr, authAzcopyEnv)
 	if err != nil {
 		klog.Warningf("failed to get azcopy job with error: %v, jobState: %v", err, AzcopyJobError)
 		return AzcopyJobError, "", fmt.Errorf("couldn't show jobs summary in azcopy %v", err)
@@ -297,6 +308,15 @@ func (ac *Azcopy) GetAzcopyJob(dstBlobContainer string) (AzcopyJobState, string,
 		return AzcopyJobError, "", fmt.Errorf("couldn't parse azcopy job show in azcopy %v", err)
 	}
 	return jobState, percent, nil
+}
+
+// TestListJobs test azcopy jobs list command with authAzcopyEnv
+func (ac *Azcopy) TestListJobs(accountName, storageEndpointSuffix string, authAzcopyEnv []string) (string, error) {
+	cmdStr := fmt.Sprintf("azcopy list %s", fmt.Sprintf("https://%s.blob.%s", accountName, storageEndpointSuffix))
+	if ac.ExecCmd == nil {
+		ac.ExecCmd = &ExecCommand{}
+	}
+	return ac.ExecCmd.RunCommand(cmdStr, authAzcopyEnv)
 }
 
 // parseAzcopyJobList parse command azcopy jobs list, get jobid and state from joblist
@@ -337,4 +357,94 @@ func parseAzcopyJobShow(jobshow string) (AzcopyJobState, string, error) {
 		return AzcopyJobError, "", fmt.Errorf("error parsing jobs summary: %s in Percent Complete (approx)", jobshow)
 	}
 	return AzcopyJobRunning, strings.ReplaceAll(segments[1], "\n", ""), nil
+}
+
+func GetKubeClient(kubeconfig string, kubeAPIQPS float64, kubeAPIBurst int, userAgent string) (kubernetes.Interface, error) {
+	var err error
+	var kubeCfg *rest.Config
+	if kubeCfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig); err != nil {
+		return nil, err
+	}
+	if kubeCfg == nil {
+		if kubeCfg, err = rest.InClusterConfig(); err != nil {
+			return nil, err
+		}
+	}
+	//kubeCfg should not be nil
+	// set QPS and QPS Burst as higher values
+	klog.V(2).Infof("set QPS(%f) and QPS Burst(%d) for driver kubeClient", float32(kubeAPIQPS), kubeAPIBurst)
+	kubeCfg.QPS = float32(kubeAPIQPS)
+	kubeCfg.Burst = kubeAPIBurst
+	kubeCfg.UserAgent = userAgent
+	return kubernetes.NewForConfig(kubeCfg)
+}
+
+type VolumeMounter struct {
+	path       string
+	attributes volume.Attributes
+}
+
+func (l *VolumeMounter) GetPath() string {
+	return l.path
+}
+
+func (l *VolumeMounter) GetAttributes() volume.Attributes {
+	return l.attributes
+}
+
+func (l *VolumeMounter) CanMount() error {
+	return nil
+}
+
+func (l *VolumeMounter) SetUp(_ volume.MounterArgs) error {
+	return nil
+}
+
+func (l *VolumeMounter) SetUpAt(_ string, _ volume.MounterArgs) error {
+	return nil
+}
+
+func (l *VolumeMounter) GetMetrics() (*volume.Metrics, error) {
+	return nil, nil
+}
+
+// SetVolumeOwnership would set gid for path recursively
+func SetVolumeOwnership(path, gid, policy string) error {
+	id, err := strconv.Atoi(gid)
+	if err != nil {
+		return fmt.Errorf("convert %s to int failed with %v", gid, err)
+	}
+	gidInt64 := int64(id)
+	fsGroupChangePolicy := v1.FSGroupChangeOnRootMismatch
+	if policy != "" {
+		fsGroupChangePolicy = v1.PodFSGroupChangePolicy(policy)
+	}
+	return volume.SetVolumeOwnership(&VolumeMounter{path: path}, path, &gidInt64, &fsGroupChangePolicy, nil)
+}
+
+// ExecFunc returns a exec function's output and error
+type ExecFunc func() (err error)
+
+// TimeoutFunc returns output and error if an ExecFunc timeout
+type TimeoutFunc func() (err error)
+
+// WaitUntilTimeout waits for the exec function to complete or return timeout error
+func WaitUntilTimeout(timeout time.Duration, execFunc ExecFunc, timeoutFunc TimeoutFunc) error {
+	// Create a channel to receive the result of the azcopy exec function
+	done := make(chan bool)
+	var err error
+
+	// Start the azcopy exec function in a goroutine
+	go func() {
+		err = execFunc()
+		done <- true
+	}()
+
+	// Wait for the function to complete or time out
+	select {
+	case <-done:
+		return err
+	case <-time.After(timeout):
+		return timeoutFunc()
+	}
 }

@@ -19,23 +19,26 @@ package blob
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2021-09-01/storage"
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/utils/pointer"
 	"sigs.k8s.io/blob-csi-driver/pkg/util"
-	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/blobclient"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azclient"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/accountclient/mock_accountclient"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/blobcontainerclient/mock_blobcontainerclient"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/mock_azclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/storageaccountclient/mockstorageaccountclient"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
+	"sigs.k8s.io/cloud-provider-azure/pkg/provider/config"
 	"sigs.k8s.io/cloud-provider-azure/pkg/retry"
 )
 
@@ -47,63 +50,6 @@ const (
 	CUSTOM
 	NULL
 )
-
-var _ blobclient.Interface = &mockBlobClient{}
-
-// mock blobclient that returns the errortype for create/delete/get operations (default value nil)
-type mockBlobClient struct {
-	// type of error returned
-	errorType *errType
-	// custom string for error type CUSTOM
-	custom  *string
-	conProp *storage.ContainerProperties
-}
-
-func (c *mockBlobClient) CreateContainer(_ context.Context, _, _, _, _ string, _ storage.BlobContainer) *retry.Error {
-	switch *c.errorType {
-	case DATAPLANE:
-		return retry.GetError(&http.Response{}, fmt.Errorf(containerBeingDeletedDataplaneAPIError))
-	case MANAGEMENT:
-		return retry.GetError(&http.Response{}, fmt.Errorf(containerBeingDeletedManagementAPIError))
-	case CUSTOM:
-		return retry.GetError(&http.Response{}, fmt.Errorf(*c.custom))
-	}
-	return nil
-}
-func (c *mockBlobClient) DeleteContainer(_ context.Context, _, _, _, _ string) *retry.Error {
-	switch *c.errorType {
-	case DATAPLANE:
-		return retry.GetError(&http.Response{}, fmt.Errorf(containerBeingDeletedDataplaneAPIError))
-	case MANAGEMENT:
-		return retry.GetError(&http.Response{}, fmt.Errorf(containerBeingDeletedManagementAPIError))
-	case CUSTOM:
-		return retry.GetError(&http.Response{}, fmt.Errorf(*c.custom))
-	}
-	return nil
-}
-func (c *mockBlobClient) GetContainer(_ context.Context, _, _, _, _ string) (storage.BlobContainer, *retry.Error) {
-	switch *c.errorType {
-	case DATAPLANE:
-		return storage.BlobContainer{ContainerProperties: c.conProp}, retry.GetError(&http.Response{}, fmt.Errorf(containerBeingDeletedDataplaneAPIError))
-	case MANAGEMENT:
-		return storage.BlobContainer{ContainerProperties: c.conProp}, retry.GetError(&http.Response{}, fmt.Errorf(containerBeingDeletedManagementAPIError))
-	case CUSTOM:
-		return storage.BlobContainer{ContainerProperties: c.conProp}, retry.GetError(&http.Response{}, fmt.Errorf(*c.custom))
-	}
-	return storage.BlobContainer{ContainerProperties: c.conProp}, nil
-}
-
-func (c *mockBlobClient) GetServiceProperties(_ context.Context, _, _, _ string) (storage.BlobServiceProperties, error) {
-	return storage.BlobServiceProperties{}, nil
-}
-
-func (c *mockBlobClient) SetServiceProperties(_ context.Context, _, _, _ string, _ storage.BlobServiceProperties) (storage.BlobServiceProperties, error) {
-	return storage.BlobServiceProperties{}, nil
-}
-
-func newMockBlobClient(errorType *errType, custom *string, conProp *storage.ContainerProperties) blobclient.Interface {
-	return &mockBlobClient{errorType: errorType, custom: custom, conProp: conProp}
-}
 
 // creates and returns mock storage account client
 func NewMockSAClient(_ context.Context, ctrl *gomock.Controller, _, _, _ string, keyList *[]storage.AccountKey) *mockstorageaccountclient.MockInterface {
@@ -230,7 +176,30 @@ func TestCreateVolume(t *testing.T) {
 					controllerServiceCapability,
 				}
 				_, err := d.CreateVolume(context.Background(), req)
-				expectedErr := status.Errorf(codes.InvalidArgument, "protocol(unit-test) is not supported, supported protocol list: [edgecache fuse fuse2 nfs]")
+				expectedErr := status.Errorf(codes.InvalidArgument, "protocol(unit-test) is not supported, supported protocol list: [edgecache fuse fuse2 nfs aznfs]")
+				if !reflect.DeepEqual(err, expectedErr) {
+					t.Errorf("actualErr: (%v), expectedErr: (%v)", err, expectedErr)
+				}
+			},
+		},
+		{
+			name: "Invalid fsGroupChangePolicy",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{}
+				mp := map[string]string{
+					fsGroupChangePolicyField: "test_fsGroupChangePolicy",
+				}
+				req := &csi.CreateVolumeRequest{
+					Name:               "unit-test",
+					VolumeCapabilities: stdVolumeCapabilities,
+					Parameters:         mp,
+				}
+				d.Cap = []*csi.ControllerServiceCapability{
+					controllerServiceCapability,
+				}
+				_, err := d.CreateVolume(context.Background(), req)
+				expectedErr := status.Errorf(codes.InvalidArgument, "fsGroupChangePolicy(test_fsGroupChangePolicy) is not supported, supported fsGroupChangePolicy list: [None Always OnRootMismatch]")
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("actualErr: (%v), expectedErr: (%v)", err, expectedErr)
 				}
@@ -439,21 +408,13 @@ func TestCreateVolume(t *testing.T) {
 			},
 		},
 		{
-			name: "NFS not supported by cross subscription",
+			name: "invalid privateEndpoint and subnetName combination",
 			testFunc: func(t *testing.T) {
 				d := NewFakeDriver()
-				d.cloud = &azure.Cloud{}
-				d.cloud.SubscriptionID = "bar"
-				mp := make(map[string]string)
-				mp[subscriptionIDField] = "foo"
-				mp[protocolField] = "nfs"
-				mp[skuNameField] = "unit-test"
-				mp[storageAccountTypeField] = "unit-test"
-				mp[locationField] = "unit-test"
-				mp[storageAccountField] = "unit-test"
-				mp[resourceGroupField] = "unit-test"
-				mp[containerNameField] = "unit-test"
-				mp[mountPermissionsField] = "0750"
+				mp := map[string]string{
+					networkEndpointTypeField: "privateendpoint",
+					subnetNameField:          "subnet1,subnet2",
+				}
 				req := &csi.CreateVolumeRequest{
 					Name:               "unit-test",
 					VolumeCapabilities: stdVolumeCapabilities,
@@ -463,40 +424,7 @@ func TestCreateVolume(t *testing.T) {
 					controllerServiceCapability,
 				}
 
-				expectedErr := status.Errorf(codes.InvalidArgument, fmt.Sprintf("NFS protocol is not supported in cross subscription(%s)", "foo"))
-				_, err := d.CreateVolume(context.Background(), req)
-				if !reflect.DeepEqual(err, expectedErr) {
-					t.Errorf("Unexpected error: %v", err)
-				}
-			},
-		},
-		{
-			name: "storeAccountKey must be set as true in cross subscription",
-			testFunc: func(t *testing.T) {
-				d := NewFakeDriver()
-				d.cloud = &azure.Cloud{}
-				d.cloud.SubscriptionID = "bar"
-				mp := make(map[string]string)
-				mp[subscriptionIDField] = "foo"
-				mp[storeAccountKeyField] = falseValue
-				mp[protocolField] = "unit-test"
-				mp[skuNameField] = "unit-test"
-				mp[storageAccountTypeField] = "unit-test"
-				mp[locationField] = "unit-test"
-				mp[storageAccountField] = "unit-test"
-				mp[resourceGroupField] = "unit-test"
-				mp[containerNameField] = "unit-test"
-				mp[mountPermissionsField] = "0750"
-				req := &csi.CreateVolumeRequest{
-					Name:               "unit-test",
-					VolumeCapabilities: stdVolumeCapabilities,
-					Parameters:         mp,
-				}
-				d.Cap = []*csi.ControllerServiceCapability{
-					controllerServiceCapability,
-				}
-
-				expectedErr := status.Errorf(codes.InvalidArgument, fmt.Sprintf("storeAccountKey must set as true in cross subscription(%s)", "foo"))
+				expectedErr := status.Errorf(codes.InvalidArgument, "subnetName(subnet1,subnet2) can only contain one subnet for private endpoint")
 				_, err := d.CreateVolume(context.Background(), req)
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("Unexpected error: %v", err)
@@ -520,7 +448,7 @@ func TestCreateVolume(t *testing.T) {
 				mp[containerNameField] = "unit-test"
 				mp[mountPermissionsField] = "0750"
 				mp[storageAuthTypeField] = "msi"
-				mp[storageIentityClientIDField] = "msi"
+				mp[storageIdentityClientIDField] = "msi"
 				mp[storageIdentityObjectIDField] = "msi"
 				mp[storageIdentityResourceIDField] = "msi"
 				mp[msiEndpointField] = "msi"
@@ -546,8 +474,8 @@ func TestCreateVolume(t *testing.T) {
 			testFunc: func(t *testing.T) {
 				d := NewFakeDriver()
 				d.cloud = &azure.Cloud{}
-				d.cloud.Config.DisableAzureStackCloud = false
-				d.cloud.Config.Cloud = "AZURESTACKCLOUD"
+				d.cloud.DisableAzureStackCloud = false
+				d.cloud.Cloud = "AZURESTACKCLOUD"
 				d.cloud.SubscriptionID = "subID"
 				mp := make(map[string]string)
 				mp[storeAccountKeyField] = falseValue
@@ -626,9 +554,13 @@ func TestCreateVolume(t *testing.T) {
 					Value:   &fakeValue,
 				})
 				d.cloud.StorageAccountClient = NewMockSAClient(context.Background(), gomock.NewController(t), "subID", "unit-test", "unit-test", &keyList)
+				controller := gomock.NewController(t)
 
-				errorType := DATAPLANE
-				d.cloud.BlobClient = &mockBlobClient{errorType: &errorType}
+				clientFactoryMock := mock_azclient.NewMockClientFactory(controller)
+				blobClientMock := mock_blobcontainerclient.NewMockInterface(controller)
+				blobClientMock.EXPECT().CreateContainer(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("timed out waiting for the condition"))
+				clientFactoryMock.EXPECT().GetBlobContainerClientForSub(gomock.Any()).Return(blobClientMock, nil)
+				d.clientFactory = clientFactoryMock
 
 				mp := make(map[string]string)
 				mp[protocolField] = "fuse"
@@ -654,6 +586,7 @@ func TestCreateVolume(t *testing.T) {
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("Unexpected error: %v", err)
 				}
+				controller.Finish()
 			},
 		},
 		{
@@ -662,12 +595,14 @@ func TestCreateVolume(t *testing.T) {
 				d := NewFakeDriver()
 				d.cloud = &azure.Cloud{}
 				d.cloud.SubscriptionID = "subID"
-
-				keyList := make([]storage.AccountKey, 0)
-				d.cloud.StorageAccountClient = NewMockSAClient(context.Background(), gomock.NewController(t), "subID", "unit-test", "unit-test", &keyList)
-
-				errorType := NULL
-				d.cloud.BlobClient = &mockBlobClient{errorType: &errorType}
+				controller := gomock.NewController(t)
+				var mockKeyList []storage.AccountKey
+				d.cloud.StorageAccountClient = NewMockSAClient(context.Background(), gomock.NewController(t), "subID", "unit-test", "unit-test", &mockKeyList)
+				clientFactoryMock := mock_azclient.NewMockClientFactory(controller)
+				blobClientMock := mock_blobcontainerclient.NewMockInterface(controller)
+				blobClientMock.EXPECT().CreateContainer(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
+				clientFactoryMock.EXPECT().GetBlobContainerClientForSub(gomock.Any()).Return(blobClientMock, nil)
+				d.clientFactory = clientFactoryMock
 
 				mp := make(map[string]string)
 				mp[storeAccountKeyField] = trueValue
@@ -694,6 +629,7 @@ func TestCreateVolume(t *testing.T) {
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("Unexpected error: %v\nExpected error: %v", err, expectedErr)
 				}
+				controller.Finish()
 			},
 		},
 		{
@@ -710,10 +646,15 @@ func TestCreateVolume(t *testing.T) {
 					KeyName: &fakeKey,
 					Value:   &fakeValue,
 				})
-				d.cloud.StorageAccountClient = NewMockSAClient(context.Background(), gomock.NewController(t), "subID", "unit-test", "unit-test", &keyList)
+				controller := gomock.NewController(t)
 
-				errorType := NULL
-				d.cloud.BlobClient = &mockBlobClient{errorType: &errorType}
+				d.cloud.StorageAccountClient = NewMockSAClient(context.Background(), controller, "subID", "unit-test", "unit-test", &keyList)
+
+				clientFactoryMock := mock_azclient.NewMockClientFactory(controller)
+				blobClientMock := mock_blobcontainerclient.NewMockInterface(controller)
+				blobClientMock.EXPECT().CreateContainer(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
+				clientFactoryMock.EXPECT().GetBlobContainerClientForSub(gomock.Any()).Return(blobClientMock, nil)
+				d.clientFactory = clientFactoryMock
 
 				mp := make(map[string]string)
 				mp[protocolField] = "fuse"
@@ -738,6 +679,7 @@ func TestCreateVolume(t *testing.T) {
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("Unexpected error: %v", err)
 				}
+				controller.Finish()
 			},
 		},
 		//nolint:dupl
@@ -756,9 +698,9 @@ func TestCreateVolume(t *testing.T) {
 					Value:   &fakeValue,
 				})
 				d.cloud.StorageAccountClient = NewMockSAClient(context.Background(), gomock.NewController(t), "subID", "unit-test", "unit-test", &keyList)
+				d.cloud.Config.AzureAuthConfig.UseManagedIdentityExtension = true
 
-				errorType := NULL
-				d.cloud.BlobClient = &mockBlobClient{errorType: &errorType}
+				d.clientFactory = mock_azclient.NewMockClientFactory(gomock.NewController(t))
 
 				mp := make(map[string]string)
 				mp[protocolField] = "fuse"
@@ -789,6 +731,15 @@ func TestCreateVolume(t *testing.T) {
 					controllerServiceCapability,
 				}
 
+				ctrl := gomock.NewController(t)
+				defer ctrl.Finish()
+
+				m := util.NewMockEXEC(ctrl)
+				listStr := "no error"
+				m.EXPECT().RunCommand(gomock.Any(), gomock.Any()).Return(listStr, nil)
+
+				d.azcopy.ExecCmd = m
+
 				expectedErr := status.Errorf(codes.InvalidArgument, "copy volume from volumeSnapshot is not supported")
 				_, err := d.CreateVolume(context.Background(), req)
 				if !reflect.DeepEqual(err, expectedErr) {
@@ -812,9 +763,9 @@ func TestCreateVolume(t *testing.T) {
 					Value:   &fakeValue,
 				})
 				d.cloud.StorageAccountClient = NewMockSAClient(context.Background(), gomock.NewController(t), "subID", "unit-test", "unit-test", &keyList)
+				d.cloud.Config.AzureAuthConfig.UseManagedIdentityExtension = true
 
-				errorType := NULL
-				d.cloud.BlobClient = &mockBlobClient{errorType: &errorType}
+				d.clientFactory = mock_azclient.NewMockClientFactory(gomock.NewController(t))
 
 				mp := make(map[string]string)
 				mp[protocolField] = "fuse"
@@ -844,6 +795,15 @@ func TestCreateVolume(t *testing.T) {
 				d.Cap = []*csi.ControllerServiceCapability{
 					controllerServiceCapability,
 				}
+
+				ctrl := gomock.NewController(t)
+				defer ctrl.Finish()
+
+				m := util.NewMockEXEC(ctrl)
+				listStr := "no error"
+				m.EXPECT().RunCommand(gomock.Any(), gomock.Any()).Return(listStr, nil)
+
+				d.azcopy.ExecCmd = m
 
 				expectedErr := status.Errorf(codes.NotFound, "error parsing volume id: \"unit-test\", should at least contain two #")
 				_, err := d.CreateVolume(context.Background(), req)
@@ -1023,7 +983,7 @@ func TestValidateVolumeCapabilities(t *testing.T) {
 		name          string
 		req           *csi.ValidateVolumeCapabilitiesRequest
 		clientErr     errType
-		containerProp *storage.ContainerProperties
+		containerProp *armstorage.ContainerProperties
 		expectedRes   *csi.ValidateVolumeCapabilitiesResponse
 		expectedErr   error
 	}{
@@ -1102,9 +1062,9 @@ func TestValidateVolumeCapabilities(t *testing.T) {
 				Secrets:            map[string]string{},
 			},
 			clientErr:     DATAPLANE,
-			containerProp: &storage.ContainerProperties{},
+			containerProp: &armstorage.ContainerProperties{},
 			expectedRes:   nil,
-			expectedErr:   status.Errorf(codes.Internal, retry.GetError(&http.Response{}, fmt.Errorf(containerBeingDeletedDataplaneAPIError)).Error().Error()),
+			expectedErr:   status.Errorf(codes.Internal, fmt.Errorf(containerBeingDeletedDataplaneAPIError).Error()),
 		},
 		{
 			name: "Requested Volume does not exist",
@@ -1114,7 +1074,7 @@ func TestValidateVolumeCapabilities(t *testing.T) {
 				Secrets:            map[string]string{},
 			},
 			clientErr:     NULL,
-			containerProp: &storage.ContainerProperties{},
+			containerProp: &armstorage.ContainerProperties{},
 			expectedRes:   nil,
 			expectedErr:   status.Errorf(codes.NotFound, fmt.Sprintf("requested volume(%s) does not exist", "unit#test#test")),
 		},
@@ -1136,31 +1096,48 @@ func TestValidateVolumeCapabilities(t *testing.T) {
 			expectedErr: nil,
 		},*/
 	}
-	d := NewFakeDriver()
-	d.cloud = &azure.Cloud{}
-	d.Cap = []*csi.ControllerServiceCapability{
-		controllerServiceCapability,
-	}
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	mockStorageAccountsClient := mockstorageaccountclient.NewMockInterface(ctrl)
-	d.cloud.StorageAccountClient = mockStorageAccountsClient
-	s := "unit-test"
-	accountkey := storage.AccountKey{
-		Value: &s,
-	}
-	accountkeylist := []storage.AccountKey{}
-	accountkeylist = append(accountkeylist, accountkey)
-	list := storage.AccountListKeysResult{
-		Keys: &accountkeylist,
-	}
-	mockStorageAccountsClient.EXPECT().ListKeys(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(list, nil).AnyTimes()
 
 	for _, test := range testCases {
+		d := NewFakeDriver()
+		d.cloud = &azure.Cloud{}
+		d.Cap = []*csi.ControllerServiceCapability{
+			controllerServiceCapability,
+		}
+		ctrl := gomock.NewController(t)
+
+		mockStorageAccountsClient := mockstorageaccountclient.NewMockInterface(ctrl)
+		d.cloud.StorageAccountClient = mockStorageAccountsClient
+		s := "unit-test"
+		accountkey := storage.AccountKey{
+			Value: &s,
+		}
+		accountkeylist := []storage.AccountKey{}
+		accountkeylist = append(accountkeylist, accountkey)
+		list := storage.AccountListKeysResult{
+			Keys: &accountkeylist,
+		}
+		mockStorageAccountsClient.EXPECT().ListKeys(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(list, nil).AnyTimes()
+
+		clientFactoryMock := mock_azclient.NewMockClientFactory(ctrl)
+		blobClientMock := mock_blobcontainerclient.NewMockInterface(ctrl)
+		clientFactoryMock.EXPECT().GetBlobContainerClientForSub(gomock.Any()).Return(blobClientMock, nil).AnyTimes()
+		blobClientMock.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(ctx context.Context, resourceGroupName string, parentResourceName string, resourceName string) (result *armstorage.BlobContainer, rerr error) {
+				switch test.clientErr {
+				case DATAPLANE:
+					return nil, fmt.Errorf(containerBeingDeletedDataplaneAPIError)
+				case MANAGEMENT:
+					return nil, fmt.Errorf(containerBeingDeletedManagementAPIError)
+				}
+				return &armstorage.BlobContainer{
+					ContainerProperties: test.containerProp,
+				}, nil
+			}).AnyTimes()
+		d.clientFactory = clientFactoryMock
 		res, err := d.ValidateVolumeCapabilities(context.Background(), test.req)
-		d.cloud.BlobClient = newMockBlobClient(&test.clientErr, pointer.String(""), test.containerProp)
 		assert.Equal(t, test.expectedErr, err, "Error in testcase (%s): Errors must match", test.name)
 		assert.Equal(t, test.expectedRes, res, "Error in testcase (%s): Response must match", test.name)
+		ctrl.Finish()
 	}
 }
 
@@ -1370,19 +1347,38 @@ func TestCreateBlobContainer(t *testing.T) {
 			secrets:       map[string]string{},
 			clientErr:     CUSTOM,
 			customErrStr:  "foobar",
-			expectedErr:   retry.GetError(&http.Response{}, fmt.Errorf("foobar")).Error(),
+			expectedErr:   fmt.Errorf("foobar"),
 		},
 	}
 
 	d := NewFakeDriver()
 	d.cloud = &azure.Cloud{}
-	conProp := &storage.ContainerProperties{}
 	for _, test := range tests {
-		d.cloud.BlobClient = newMockBlobClient(&test.clientErr, &test.customErrStr, conProp)
+		controller := gomock.NewController(t)
+		clientFactoryMock := mock_azclient.NewMockClientFactory(controller)
+		blobClientMock := mock_blobcontainerclient.NewMockInterface(controller)
+		accountClientMock := mock_accountclient.NewMockInterface(controller)
+		clientFactoryMock.EXPECT().GetAccountClientForSub(gomock.Any()).Return(accountClientMock, nil).AnyTimes()
+		clientFactoryMock.EXPECT().GetBlobContainerClientForSub(gomock.Any()).Return(blobClientMock, nil).AnyTimes()
+		d.clientFactory = clientFactoryMock
+		blobClientMock.EXPECT().CreateContainer(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(ctx context.Context, resourceGroupName, accountName, containerName string, parameters armstorage.BlobContainer) (*armstorage.BlobContainer, error) {
+				if test.clientErr == DATAPLANE {
+					return nil, fmt.Errorf(containerBeingDeletedDataplaneAPIError)
+				}
+				if test.clientErr == MANAGEMENT {
+					return nil, fmt.Errorf(containerBeingDeletedManagementAPIError)
+				}
+				if test.clientErr == CUSTOM {
+					return nil, fmt.Errorf(test.customErrStr)
+				}
+				return nil, nil
+			}).AnyTimes()
 		err := d.CreateBlobContainer(context.Background(), test.subsID, test.rg, test.accountName, test.containerName, test.secrets)
 		if !reflect.DeepEqual(err, test.expectedErr) {
 			t.Errorf("test(%s), actualErr: (%v), expectedErr: (%v)", test.desc, err, test.expectedErr)
 		}
+		controller.Finish()
 	}
 }
 
@@ -1441,20 +1437,38 @@ func TestDeleteBlobContainer(t *testing.T) {
 			clientErr:     CUSTOM,
 			customErrStr:  "foobar",
 			expectedErr: fmt.Errorf("failed to delete container(%s) on account(%s), error: %w", "containerName", "",
-				retry.GetError(&http.Response{}, fmt.Errorf("foobar")).Error()),
+				fmt.Errorf("foobar")),
 		},
 	}
 
 	d := NewFakeDriver()
-	d.cloud = &azure.Cloud{}
 
-	connProp := &storage.ContainerProperties{}
 	for _, test := range tests {
-		d.cloud.BlobClient = newMockBlobClient(&test.clientErr, &test.customErrStr, connProp)
+		controller := gomock.NewController(t)
+		clientFactoryMock := mock_azclient.NewMockClientFactory(controller)
+		blobClientMock := mock_blobcontainerclient.NewMockInterface(controller)
+		accountClientMock := mock_accountclient.NewMockInterface(controller)
+		clientFactoryMock.EXPECT().GetAccountClientForSub(gomock.Any()).Return(accountClientMock, nil).AnyTimes()
+		clientFactoryMock.EXPECT().GetBlobContainerClientForSub(gomock.Any()).Return(blobClientMock, nil).AnyTimes()
+		d.clientFactory = clientFactoryMock
+		blobClientMock.EXPECT().DeleteContainer(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(ctx context.Context, resourceGroupName, accountName, containerName string) error {
+				if test.clientErr == DATAPLANE {
+					return fmt.Errorf(containerBeingDeletedDataplaneAPIError)
+				}
+				if test.clientErr == MANAGEMENT {
+					return fmt.Errorf(containerBeingDeletedManagementAPIError)
+				}
+				if test.clientErr == CUSTOM {
+					return fmt.Errorf(test.customErrStr)
+				}
+				return nil
+			}).AnyTimes()
 		err := d.DeleteBlobContainer(context.Background(), test.subsID, test.rg, test.accountName, test.containerName, test.secrets)
 		if !reflect.DeepEqual(err, test.expectedErr) {
 			t.Errorf("test(%s), actualErr: (%v), expectedErr: (%v)", test.desc, err, test.expectedErr)
 		}
+		controller.Finish()
 	}
 }
 
@@ -1493,10 +1507,8 @@ func TestCopyVolume(t *testing.T) {
 					VolumeContentSource: &volumecontensource,
 				}
 
-				ctx := context.Background()
-
 				expectedErr := status.Errorf(codes.InvalidArgument, "copy volume from volumeSnapshot is not supported")
-				err := d.copyVolume(ctx, req, "", "", "core.windows.net")
+				err := d.copyVolume(req, "", nil, "", "core.windows.net")
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("Unexpected error: %v", err)
 				}
@@ -1525,10 +1537,8 @@ func TestCopyVolume(t *testing.T) {
 					VolumeContentSource: &volumecontensource,
 				}
 
-				ctx := context.Background()
-
 				expectedErr := status.Errorf(codes.NotFound, "error parsing volume id: \"unit-test\", should at least contain two #")
-				err := d.copyVolume(ctx, req, "", "dstContainer", "core.windows.net")
+				err := d.copyVolume(req, "", nil, "dstContainer", "core.windows.net")
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("Unexpected error: %v", err)
 				}
@@ -1557,10 +1567,8 @@ func TestCopyVolume(t *testing.T) {
 					VolumeContentSource: &volumecontensource,
 				}
 
-				ctx := context.Background()
-
 				expectedErr := fmt.Errorf("srcContainerName() or dstContainerName(dstContainer) is empty")
-				err := d.copyVolume(ctx, req, "", "dstContainer", "core.windows.net")
+				err := d.copyVolume(req, "", nil, "dstContainer", "core.windows.net")
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("Unexpected error: %v", err)
 				}
@@ -1589,10 +1597,8 @@ func TestCopyVolume(t *testing.T) {
 					VolumeContentSource: &volumecontensource,
 				}
 
-				ctx := context.Background()
-
 				expectedErr := fmt.Errorf("srcContainerName(fileshare) or dstContainerName() is empty")
-				err := d.copyVolume(ctx, req, "", "", "core.windows.net")
+				err := d.copyVolume(req, "", nil, "", "core.windows.net")
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("Unexpected error: %v", err)
 				}
@@ -1626,24 +1632,22 @@ func TestCopyVolume(t *testing.T) {
 
 				m := util.NewMockEXEC(ctrl)
 				listStr := "JobId: ed1c3833-eaff-fe42-71d7-513fb065a9d9\nStart Time: Monday, 07-Aug-23 03:29:54 UTC\nStatus: Completed\nCommand: copy https://{accountName}.file.core.windows.net/{srcFileshare}{SAStoken} https://{accountName}.file.core.windows.net/{dstFileshare}{SAStoken} --recursive --check-length=false"
-				m.EXPECT().RunCommand(gomock.Eq("azcopy jobs list | grep dstContainer -B 3")).Return(listStr, nil)
+				m.EXPECT().RunCommand(gomock.Eq("azcopy jobs list | grep dstContainer -B 3"), gomock.Any()).Return(listStr, nil)
 				// if test.enableShow {
 				// 	m.EXPECT().RunCommand(gomock.Not("azcopy jobs list | grep dstContainer -B 3")).Return(test.showStr, test.showErr)
 				// }
 
 				d.azcopy.ExecCmd = m
 
-				ctx := context.Background()
-
 				var expectedErr error
-				err := d.copyVolume(ctx, req, "", "dstContainer", "core.windows.net")
+				err := d.copyVolume(req, "sastoken", nil, "dstContainer", "core.windows.net")
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("Unexpected error: %v", err)
 				}
 			},
 		},
 		{
-			name: "azcopy job is first in progress and then be completed",
+			name: "azcopy job is in progress",
 			testFunc: func(t *testing.T) {
 				d := NewFakeDriver()
 				mp := map[string]string{}
@@ -1670,18 +1674,13 @@ func TestCopyVolume(t *testing.T) {
 
 				m := util.NewMockEXEC(ctrl)
 				listStr1 := "JobId: ed1c3833-eaff-fe42-71d7-513fb065a9d9\nStart Time: Monday, 07-Aug-23 03:29:54 UTC\nStatus: InProgress\nCommand: copy https://{accountName}.file.core.windows.net/{srcFileshare}{SAStoken} https://{accountName}.file.core.windows.net/{dstFileshare}{SAStoken} --recursive --check-length=false"
-				listStr2 := "JobId: ed1c3833-eaff-fe42-71d7-513fb065a9d9\nStart Time: Monday, 07-Aug-23 03:29:54 UTC\nStatus: Completed\nCommand: copy https://{accountName}.file.core.windows.net/{srcFileshare}{SAStoken} https://{accountName}.file.core.windows.net/{dstFileshare}{SAStoken} --recursive --check-length=false"
-				o1 := m.EXPECT().RunCommand(gomock.Eq("azcopy jobs list | grep dstContainer -B 3")).Return(listStr1, nil).Times(1)
-				m.EXPECT().RunCommand(gomock.Not("azcopy jobs list | grep dstBlobContainer -B 3")).Return("Percent Complete (approx): 50.0", nil)
-				o2 := m.EXPECT().RunCommand(gomock.Eq("azcopy jobs list | grep dstContainer -B 3")).Return(listStr2, nil)
-				gomock.InOrder(o1, o2)
+				m.EXPECT().RunCommand(gomock.Eq("azcopy jobs list | grep dstContainer -B 3"), gomock.Any()).Return(listStr1, nil).Times(1)
+				m.EXPECT().RunCommand(gomock.Not("azcopy jobs list | grep dstBlobContainer -B 3"), gomock.Any()).Return("Percent Complete (approx): 50.0", nil)
 
 				d.azcopy.ExecCmd = m
 
-				ctx := context.Background()
-
-				var expectedErr error
-				err := d.copyVolume(ctx, req, "", "dstContainer", "core.windows.net")
+				expectedErr := fmt.Errorf("wait for the existing AzCopy job to complete, current copy percentage is 50.0%%")
+				err := d.copyVolume(req, "sastoken", nil, "dstContainer", "core.windows.net")
 				if !reflect.DeepEqual(err, expectedErr) {
 					t.Errorf("Unexpected error: %v", err)
 				}
@@ -1694,7 +1693,7 @@ func TestCopyVolume(t *testing.T) {
 	}
 }
 
-func Test_parseDays(t *testing.T) {
+func TestParseDays(t *testing.T) {
 	type args struct {
 		dayStr string
 	}
@@ -1743,7 +1742,8 @@ func Test_parseDays(t *testing.T) {
 	}
 }
 
-func Test_generateSASToken(t *testing.T) {
+func TestGenerateSASToken(t *testing.T) {
+	d := NewFakeDriver()
 	storageEndpointSuffix := "core.windows.net"
 	tests := []struct {
 		name        string
@@ -1769,7 +1769,7 @@ func Test_generateSASToken(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sas, err := generateSASToken(tt.accountName, tt.accountKey, storageEndpointSuffix, 30)
+			sas, err := d.generateSASToken(tt.accountName, tt.accountKey, storageEndpointSuffix, 30)
 			if !reflect.DeepEqual(err, tt.expectedErr) {
 				t.Errorf("generateSASToken error = %v, expectedErr %v, sas token = %v, want %v", err, tt.expectedErr, sas, tt.want)
 				return
@@ -1778,5 +1778,238 @@ func Test_generateSASToken(t *testing.T) {
 				t.Errorf("sas token = %v, want %v", sas, tt.want)
 			}
 		})
+	}
+}
+
+func TestAuthorizeAzcopyWithIdentity(t *testing.T) {
+	testCases := []struct {
+		name     string
+		testFunc func(t *testing.T)
+	}{
+		{
+			name: "use service principal to authorize azcopy",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{
+					Config: azure.Config{
+						AzureAuthConfig: config.AzureAuthConfig{
+							ARMClientConfig: azclient.ARMClientConfig{
+								TenantID: "TenantID",
+							},
+							AzureAuthConfig: azclient.AzureAuthConfig{
+								AADClientID:     "AADClientID",
+								AADClientSecret: "AADClientSecret",
+							},
+						},
+					},
+				}
+				expectedAuthAzcopyEnv := []string{
+					fmt.Sprintf(azcopyAutoLoginType + "=SPN"),
+					fmt.Sprintf(azcopySPAApplicationID + "=AADClientID"),
+					fmt.Sprintf(azcopySPAClientSecret + "=AADClientSecret"),
+					fmt.Sprintf(azcopyTenantID + "=TenantID"),
+				}
+				var expectedErr error
+				authAzcopyEnv, err := d.authorizeAzcopyWithIdentity()
+				if !reflect.DeepEqual(authAzcopyEnv, expectedAuthAzcopyEnv) || !reflect.DeepEqual(err, expectedErr) {
+					t.Errorf("Unexpected authAzcopyEnv: %v, Unexpected error: %v", authAzcopyEnv, err)
+				}
+			},
+		},
+		{
+			name: "use service principal to authorize azcopy but client id is empty",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{
+					Config: azure.Config{
+						AzureAuthConfig: config.AzureAuthConfig{
+							ARMClientConfig: azclient.ARMClientConfig{
+								TenantID: "TenantID",
+							},
+							AzureAuthConfig: azclient.AzureAuthConfig{
+								AADClientSecret: "AADClientSecret",
+							},
+						},
+					},
+				}
+				expectedAuthAzcopyEnv := []string{}
+				expectedErr := fmt.Errorf("AADClientID and TenantID must be set when use service principal")
+				authAzcopyEnv, err := d.authorizeAzcopyWithIdentity()
+				if !reflect.DeepEqual(authAzcopyEnv, expectedAuthAzcopyEnv) || !reflect.DeepEqual(err, expectedErr) {
+					t.Errorf("Unexpected authAzcopyEnv: %v, Unexpected error: %v", authAzcopyEnv, err)
+				}
+			},
+		},
+		{
+			name: "use user assigned managed identity to authorize azcopy",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{
+					Config: azure.Config{
+						AzureAuthConfig: config.AzureAuthConfig{
+							AzureAuthConfig: azclient.AzureAuthConfig{
+								UseManagedIdentityExtension: true,
+								UserAssignedIdentityID:      "UserAssignedIdentityID",
+							},
+						},
+					},
+				}
+				expectedAuthAzcopyEnv := []string{
+					fmt.Sprintf(azcopyAutoLoginType + "=MSI"),
+					fmt.Sprintf(azcopyMSIClientID + "=UserAssignedIdentityID"),
+				}
+				var expectedErr error
+				authAzcopyEnv, err := d.authorizeAzcopyWithIdentity()
+				if !reflect.DeepEqual(authAzcopyEnv, expectedAuthAzcopyEnv) || !reflect.DeepEqual(err, expectedErr) {
+					t.Errorf("Unexpected authAzcopyEnv: %v, Unexpected error: %v", authAzcopyEnv, err)
+				}
+			},
+		},
+		{
+			name: "use system assigned managed identity to authorize azcopy",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{
+					Config: azure.Config{
+						AzureAuthConfig: config.AzureAuthConfig{
+							AzureAuthConfig: azclient.AzureAuthConfig{
+								UseManagedIdentityExtension: true,
+							},
+						},
+					},
+				}
+				expectedAuthAzcopyEnv := []string{
+					fmt.Sprintf(azcopyAutoLoginType + "=MSI"),
+				}
+				var expectedErr error
+				authAzcopyEnv, err := d.authorizeAzcopyWithIdentity()
+				if !reflect.DeepEqual(authAzcopyEnv, expectedAuthAzcopyEnv) || !reflect.DeepEqual(err, expectedErr) {
+					t.Errorf("Unexpected authAzcopyEnv: %v, Unexpected error: %v", authAzcopyEnv, err)
+				}
+			},
+		},
+		{
+			name: "AADClientSecret be nil and useManagedIdentityExtension is false",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{
+					Config: azure.Config{
+						AzureAuthConfig: config.AzureAuthConfig{},
+					},
+				}
+				expectedAuthAzcopyEnv := []string{}
+				expectedErr := fmt.Errorf("service principle or managed identity are both not set")
+				authAzcopyEnv, err := d.authorizeAzcopyWithIdentity()
+				if !reflect.DeepEqual(authAzcopyEnv, expectedAuthAzcopyEnv) || !reflect.DeepEqual(err, expectedErr) {
+					t.Errorf("Unexpected authAzcopyEnv: %v, Unexpected error: %v", authAzcopyEnv, err)
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, tc.testFunc)
+	}
+}
+
+func TestGetAzcopyAuth(t *testing.T) {
+	testCases := []struct {
+		name     string
+		testFunc func(t *testing.T)
+	}{
+		{
+			name: "failed to get accountKey in secrets",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{
+					Config: azure.Config{},
+				}
+				secrets := map[string]string{
+					defaultSecretAccountName: "accountName",
+				}
+
+				ctx := context.Background()
+				expectedAccountSASToken := ""
+				expectedErr := fmt.Errorf("could not find accountkey or azurestorageaccountkey field in secrets")
+				accountSASToken, _, err := d.getAzcopyAuth(ctx, "accountName", "", "core.windows.net", &azure.AccountOptions{}, secrets, "secretsName", "secretsNamespace")
+				if !reflect.DeepEqual(err, expectedErr) || !reflect.DeepEqual(accountSASToken, expectedAccountSASToken) {
+					t.Errorf("Unexpected accountSASToken: %s, Unexpected error: %v", accountSASToken, err)
+				}
+			},
+		},
+		{
+			name: "generate sas token using account key",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{
+					Config: azure.Config{
+						AzureAuthConfig: config.AzureAuthConfig{
+							AzureAuthConfig: azclient.AzureAuthConfig{
+								UseManagedIdentityExtension: true,
+							},
+						},
+					},
+				}
+				secrets := map[string]string{
+					defaultSecretAccountName: "accountName",
+					defaultSecretAccountKey:  "YWNjb3VudGtleQo=",
+				}
+				accountSASToken, _, err := d.getAzcopyAuth(context.Background(), "accountName", "", "core.windows.net", &azure.AccountOptions{}, secrets, "secretsName", "secretsNamespace")
+				if !reflect.DeepEqual(err, nil) || !strings.Contains(accountSASToken, "?se=") {
+					t.Errorf("Unexpected accountSASToken: %s, Unexpected error: %v", accountSASToken, err)
+				}
+			},
+		},
+		{
+			name: "fall back to generate SAS token failed for illegal account key",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{
+					Config: azure.Config{
+						AzureAuthConfig: config.AzureAuthConfig{
+							AzureAuthConfig: azclient.AzureAuthConfig{
+								UseManagedIdentityExtension: true,
+							},
+						},
+					},
+				}
+				secrets := map[string]string{
+					defaultSecretAccountName: "accountName",
+					defaultSecretAccountKey:  "fakeValue",
+				}
+
+				expectedAccountSASToken := ""
+				expectedErr := status.Errorf(codes.Internal, fmt.Sprintf("failed to generate sas token in creating new shared key credential, accountName: %s, err: %s", "accountName", "decode account key: illegal base64 data at input byte 8"))
+				accountSASToken, _, err := d.getAzcopyAuth(context.Background(), "accountName", "", "core.windows.net", &azure.AccountOptions{}, secrets, "secretsName", "secretsNamespace")
+				if !reflect.DeepEqual(err, expectedErr) || !reflect.DeepEqual(accountSASToken, expectedAccountSASToken) {
+					t.Errorf("Unexpected accountSASToken: %s, Unexpected error: %v", accountSASToken, err)
+				}
+			},
+		},
+		{
+			name: "generate SAS token failed for illegal account key",
+			testFunc: func(t *testing.T) {
+				d := NewFakeDriver()
+				d.cloud = &azure.Cloud{
+					Config: azure.Config{},
+				}
+				secrets := map[string]string{
+					defaultSecretAccountName: "accountName",
+					defaultSecretAccountKey:  "fakeValue",
+				}
+
+				ctx := context.Background()
+				expectedAccountSASToken := ""
+				expectedErr := status.Errorf(codes.Internal, fmt.Sprintf("failed to generate sas token in creating new shared key credential, accountName: %s, err: %s", "accountName", "decode account key: illegal base64 data at input byte 8"))
+				accountSASToken, _, err := d.getAzcopyAuth(ctx, "accountName", "", "core.windows.net", &azure.AccountOptions{}, secrets, "secretsName", "secretsNamespace")
+				if !reflect.DeepEqual(err, expectedErr) || !reflect.DeepEqual(accountSASToken, expectedAccountSASToken) {
+					t.Errorf("Unexpected accountSASToken: %s, Unexpected error: %v", accountSASToken, err)
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, tc.testFunc)
 	}
 }
