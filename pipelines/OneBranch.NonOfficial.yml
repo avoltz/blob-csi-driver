@@ -59,7 +59,7 @@ extends:
       - container: linux_build_container
         image: $(LinuxContainerImage)
         type: Linux
-        endpoint: "hydraedge-acr-connection"
+        endpoint: "hydraedge-acr-wif-connection"
 
     globalSdl: # https://aka.ms/obpipelines/sdl
       # Details on TSA onboarding:
