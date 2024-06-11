@@ -154,7 +154,7 @@ stages:
               enable_acr_push: true
               buildkit: 1 # turn on for optimizations like caching, parallelization, new dockerfile options
               enable_cache: true # take advantage of multi-stage caching
-              endpoint: "${{ parameters.acr }}-acr-connection"
+              endpoint: "${{ parameters.acr }}-acr-wif-connection"
               arguments: --build-arg ARCH=${{ arch }} --build-arg BUILD_IMAGE=$(TOOLCHAIN_IMAGE)
               build_tag: "$(ESA_BUILD_VERSION)-${{ arch }}"
 
