@@ -12,18 +12,21 @@
 #       call of this template.
 parameters:
   - name: acr
-    displayName: ACR for container image publish
+    displayName: ACR for container image and chart publish
     type: string
   - name: architectures
     displayName: Architectures to build
     type: object
+  - name: helmPath
+    displayName: Path to the Helm chart to package; latest will build version from BLOB_CSI_VERSION
+    type: string
+    default: "latest"
   - name: buildType
     displayName: The type of build.
     type: string
     values:
       - official
       - buddy
-
 
 stages:
   - stage: setup
@@ -176,6 +179,7 @@ stages:
         variables:
           ob_outputDirectory: "$(Build.SourcesDirectory)/out"
         steps:
+          - checkout: self
           - checkout: Hydra
           - template: pipelines/templates/job_start.yml@Hydra
             parameters:
@@ -227,7 +231,16 @@ stages:
               images:
                 - $(BlobImageRepo)
 
+          - template: pipelines/templates/package_and_push_helm_chart.yml@Hydra
+            parameters:
+              displayName: "Package and push blob-csi-driver Helm chart"
+              ${{ if eq(parameters.helmPath, 'latest') }}:
+                chartPath: Hydra-blob-csi-driver/charts/$(blobCsiVersion)/blob-csi-driver
+              ${{ else }}:
+                chartPath: ${{ parameters.helmPath }}
+              chartVer: "$(blobCsiVersion)"
+              acr: ${{ parameters.acr }}
+
           - task: ComponentGovernanceComponentDetection@0
             inputs:
               ignoreDirectories: s # Hydra is checked out to "s"
-
